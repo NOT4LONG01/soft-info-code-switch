@@ -208,18 +208,13 @@ def bplsd_simulation_task_single(
         converges_list.append(converge)
 
         # Extract new soft outputs
-        scalar_soft_infos_list.append(
-            {
-                "pred_llr": soft_info["pred_llr"],
-                "detector_density": soft_info["detector_density"],
-            }
-        )
+        scalar_dict = {
+            "pred_llr": soft_info["pred_llr"],
+            "detector_density": soft_info["detector_density"],
+        }
         if compute_logical_gap_proxy:
-            scalar_soft_infos_list.append(
-                {
-                    "gap_proxy": soft_info["gap_proxy"],
-                }
-            )
+            scalar_dict["gap_proxy"] = soft_info["gap_proxy"]
+        scalar_soft_infos_list.append(scalar_dict)
 
         if include_cluster_stats:
             clusters = soft_info["clusters"]

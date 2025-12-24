@@ -29,6 +29,8 @@ def simulate(
     shots_per_batch: int = 1_000_000,
     decoder_prms: Dict[str, Any] | None = None,
     noise_model: str = "circuit-level",
+    compute_logical_gap_proxy: bool = False,
+    include_cluster_stats: bool = True,
 ) -> None:
     """
     Run the simulation for a given (p, d, T) configuration, saving results in batches.
@@ -56,6 +58,11 @@ def simulate(
         Parameters for the SoftOutputsBpLsdDecoder.
     noise_model : str, default="circuit-level"
         The noise model type: ["circuit-level", "code-capacity", "phenom"].
+    compute_logical_gap_proxy : bool, default=False
+        Whether to compute logical gap proxy. When True, cluster stats are
+        automatically disabled (mutually exclusive).
+    include_cluster_stats : bool, default=True
+        Whether to include cluster statistics.
 
     Returns
     -------
@@ -120,6 +127,8 @@ def simulate(
             n_jobs=n_jobs,
             repeat=repeat,
             decoder_prms=decoder_prms,
+            compute_logical_gap_proxy=compute_logical_gap_proxy,
+            include_cluster_stats=include_cluster_stats,
         )
 
         # Prepare filenames for this batch (now with fixed names within batch_output_dir)
@@ -136,7 +145,8 @@ def simulate(
         df_new.to_feather(fp_feather)
 
         # Save sparse matrices as compressed NPZ files
-        sparse.save_npz(fp_clusters, clusters_csr)
+        if clusters_csr is not None:
+            sparse.save_npz(fp_clusters, clusters_csr)
         sparse.save_npz(fp_preds, preds_csr)
         sparse.save_npz(fp_preds_bp, preds_bp_csr)
 
@@ -173,6 +183,8 @@ if __name__ == "__main__":
     total_shots = round(3e8)
     n_jobs = 18
     repeat = 10
+    compute_logical_gap_proxy = False
+    include_cluster_stats = True
 
     decoder_prms = {
         "max_iter": 30,
@@ -209,6 +221,8 @@ if __name__ == "__main__":
             shots_per_batch=shots_per_batch,
             decoder_prms=decoder_prms,
             noise_model=noise_model,
+            compute_logical_gap_proxy=compute_logical_gap_proxy,
+            include_cluster_stats=include_cluster_stats,
         )
 
     t0 = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
