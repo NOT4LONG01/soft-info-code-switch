@@ -191,6 +191,97 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
 
         return logical_classes_to_explore
 
+    def _sample_random_logical_classes(
+        self,
+        excluded_logical_class: np.ndarray,
+        num_total_logical_classes: int,
+        verbose: bool = False,
+    ) -> List[np.ndarray]:
+        """
+        Sample random logical classes excluding a given logical class.
+
+        Parameters
+        ----------
+        excluded_logical_class : 1D numpy array of bool
+            Logical class to exclude from sampling (typically the initial best class).
+        num_total_logical_classes : int
+            Total number of logical classes to explore including `excluded_logical_class`.
+            Randomly samples `num_total_logical_classes - 1` additional classes.
+        verbose : bool, optional
+            If True, print progress information. Defaults to False.
+
+        Returns
+        -------
+        sampled_logical_classes : list of 1D numpy array of bool
+            Randomly sampled logical classes, excluding `excluded_logical_class`.
+        """
+        if num_total_logical_classes < 1:
+            raise ValueError("explore_random_logical_classes must be >= 1")
+
+        num_observables = len(excluded_logical_class)
+        if num_observables == 0:
+            return []
+
+        total_num_logical_classes = 1 << num_observables
+        max_additional_logical_classes = total_num_logical_classes - 1
+        num_additional_logical_classes = min(
+            num_total_logical_classes - 1, max_additional_logical_classes
+        )
+
+        if num_additional_logical_classes == 0:
+            return []
+
+        if (
+            num_additional_logical_classes == max_additional_logical_classes
+            and max_additional_logical_classes > 1_000_000
+        ):
+            raise ValueError(
+                "Requested to explore all logical classes via explore_random_logical_classes, "
+                "but the number of logical classes is too large."
+            )
+
+        # Integer representation where bit i corresponds to excluded_logical_class[i]
+        excluded_logical_class_int = 0
+        for bit_index, bit in enumerate(excluded_logical_class.tolist()):
+            if bit:
+                excluded_logical_class_int |= 1 << bit_index
+
+        sampled_class_ints: List[int]
+        if num_observables <= 62:
+            base_samples = random.sample(
+                range(total_num_logical_classes - 1), num_additional_logical_classes
+            )
+            sampled_class_ints = [
+                x + 1 if x >= excluded_logical_class_int else x for x in base_samples
+            ]
+        else:
+            selected: set[int] = set()
+            while len(selected) < num_additional_logical_classes:
+                candidate = random.getrandbits(num_observables)
+                if candidate == excluded_logical_class_int:
+                    continue
+                selected.add(candidate)
+            sampled_class_ints = list(selected)
+
+        sampled_logical_classes = [
+            np.array(
+                [
+                    (logical_class_int >> bit_index) & 1
+                    for bit_index in range(num_observables)
+                ],
+                dtype=bool,
+            )
+            for logical_class_int in sampled_class_ints
+        ]
+
+        if verbose:
+            print(
+                f"  Randomly exploring {len(sampled_logical_classes)} additional logical classes "
+                f"(requested_total={num_total_logical_classes})"
+            )
+
+        return sampled_logical_classes
+
     def _perform_fixed_logical_class_decoding(
         self,
         detector_outcomes: np.ndarray,
@@ -263,6 +354,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         pred: np.ndarray,
         original_pred_llr: float,
         explore_only_nearby_logical_classes: bool,
+        explore_random_logical_classes: Optional[int] = None,
         verbose: bool = False,
     ) -> Tuple[float, np.ndarray, float]:
         """
@@ -278,6 +370,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             Original prediction LLR.
         explore_only_nearby_logical_classes : bool
             Whether to explore only nearby logical classes.
+        explore_random_logical_classes : int, optional
+            If given, randomly sample `explore_random_logical_classes - 1` additional
+            logical classes (excluding the initial best class) and compute the gap
+            proxy using only the explored classes. Cannot be used together with
+            explore_only_nearby_logical_classes.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
 
@@ -310,29 +407,49 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         explored_classes = {}  # logical_class tuple -> (pred_llr, pred_pattern)
         explored_classes[tuple(original_logical_class)] = (original_pred_llr, pred)
 
-        # Queue for iterative exploration
-        to_explore = [original_logical_class]
-        explored_set = {tuple(original_logical_class)}
+        if explore_random_logical_classes is not None:
+            if explore_only_nearby_logical_classes:
+                raise ValueError(
+                    "explore_random_logical_classes cannot be used together with "
+                    "explore_only_nearby_logical_classes"
+                )
 
-        if not explore_only_nearby_logical_classes:
-            # If exploring all classes, generate them all at once
+            random_logical_classes = self._sample_random_logical_classes(
+                excluded_logical_class=original_logical_class,
+                num_total_logical_classes=explore_random_logical_classes,
+                verbose=verbose,
+            )
+
+            for logical_class in random_logical_classes:
+                pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
+                    detector_outcomes, logical_class, verbose=verbose
+                )
+                explored_classes[tuple(logical_class)] = (pred_llr, pred_pattern)
+
+        elif not explore_only_nearby_logical_classes:
+            # Explore all classes (except the initial one)
             num_observables = len(original_logical_class)
-            all_logical_classes = list(product([False, True], repeat=num_observables))
+            all_logical_classes = product([False, True], repeat=num_observables)
 
             if verbose:
-                print(f"  Exploring all {len(all_logical_classes)} logical classes")
+                print(f"  Exploring all {1 << num_observables} logical classes")
 
             for logical_class_tuple in all_logical_classes:
+                if logical_class_tuple == tuple(original_logical_class):
+                    continue
                 logical_class = np.array(logical_class_tuple, dtype=bool)
-                if tuple(logical_class) not in explored_set:
-                    if verbose:
-                        print(f"  Processing logical class {logical_class}")
-                    pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
-                        detector_outcomes, logical_class, verbose=verbose
-                    )
-                    explored_classes[tuple(logical_class)] = (pred_llr, pred_pattern)
+                if verbose:
+                    print(f"  Processing logical class {logical_class}")
+                pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
+                    detector_outcomes, logical_class, verbose=verbose
+                )
+                explored_classes[logical_class_tuple] = (pred_llr, pred_pattern)
+
         else:
             # Iterative exploration for nearby classes only
+            to_explore = [original_logical_class]
+            explored_set = {tuple(original_logical_class)}
+
             iteration = 0
             while to_explore:
                 iteration += 1
@@ -556,7 +673,8 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         detector_outcomes: np.ndarray | List[bool | int],
         include_cluster_stats: bool = True,
         compute_logical_gap_proxy: bool = False,
-        explore_only_nearby_logical_classes: bool = True,
+        explore_only_nearby_logical_classes: bool = False,
+        explore_random_logical_classes: Optional[int] = None,
         verbose: bool = False,
         _benchmarking: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray, bool, Dict[str, Any]]:
@@ -576,7 +694,14 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         explore_only_nearby_logical_classes : bool
             If True, only explore adjacent logical classes for gap proxy computation.
             If False, explore all possible logical classes. Only used when
-            compute_logical_gap_proxy is True. Defaults to True.
+            compute_logical_gap_proxy is True. Defaults to False.
+        explore_random_logical_classes : int, optional
+            If given, explore a random subset of logical classes for gap proxy
+            computation. Specifically, it explores the initial best class and
+            `explore_random_logical_classes - 1` additional logical classes sampled
+            uniformly at random from all other logical classes. Only used when
+            compute_logical_gap_proxy is True. Cannot be used together with
+            explore_only_nearby_logical_classes. Defaults to None.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
         _benchmarking : bool
@@ -611,7 +736,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             start_time = time.time()
             step_start = time.time()
 
-        # Prevent simultaneous use of both options to simplify the implementation
+        # Gap proxy computation disables cluster stats for efficiency
         if compute_logical_gap_proxy:
             include_cluster_stats = False
 
@@ -744,6 +869,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 pred,
                 soft_outputs["pred_llr"],
                 explore_only_nearby_logical_classes,
+                explore_random_logical_classes=explore_random_logical_classes,
                 verbose=verbose,
             )
 

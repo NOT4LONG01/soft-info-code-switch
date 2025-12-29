@@ -1,3 +1,4 @@
+import random
 import numpy as np
 import pytest
 import stim
@@ -162,6 +163,49 @@ class TestSoftOutputsBpLsdDecoder:
         assert "gap_proxy" in soft_outputs2
         assert isinstance(soft_outputs2["gap_proxy"], float)
         assert not np.isnan(soft_outputs2["gap_proxy"])
+
+    def test_logical_gap_proxy_random_logical_classes(self, circuit_data):
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+
+        random.seed(0)
+        pred, pred_bp, converge, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            explore_random_logical_classes=1,
+        )
+
+        assert "gap_proxy" in soft_outputs
+        assert soft_outputs["gap_proxy"] == 0.0
+
+        random.seed(0)
+        pred2, pred_bp2, converge2, soft_outputs2 = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            explore_random_logical_classes=4,
+        )
+
+        assert "gap_proxy" in soft_outputs2
+        assert isinstance(soft_outputs2["gap_proxy"], float)
+        assert not np.isnan(soft_outputs2["gap_proxy"])
+        assert soft_outputs2["gap_proxy"] >= 0.0
+
+    def test_logical_gap_proxy_random_classes_invalid_params(self, circuit_data):
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+
+        with pytest.raises(ValueError, match="explore_random_logical_classes"):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                explore_random_logical_classes=0,
+            )
+
+        with pytest.raises(ValueError, match="cannot be used together"):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                explore_only_nearby_logical_classes=True,
+                explore_random_logical_classes=2,
+            )
 
     def test_logical_gap_proxy_disabled(self, circuit_data):
         """Test that gap_proxy is not computed when disabled."""
