@@ -170,21 +170,29 @@ if __name__ == "__main__":
         "ignore", message="A worker stopped while some jobs were given to the executor."
     )
 
+    # prms = []
+    # for d in [5, 9, 13]:
+    #     max_p = 5e-3
+    #     for p in np.arange(1e-3, max_p + 1e-4, 1e-3).round(4):
+    #         prms.append((d, p))
+
     prms = []
-    for d in [9, 13]:
-        max_p = 5e-3
-        for p in np.arange(1e-3, max_p + 1e-4, 1e-3).round(4):
+    for d in [5, 9, 13]:
+        for p in [1e-3, 3e-3]:
             prms.append((d, p))
+
+    # prms = [(13, 5e-3)]
 
     noise_model = "circuit-level"
     # noise_model = "phenom"
 
     shots_per_batch = round(1e7)
-    total_shots = round(3e8)
-    n_jobs = 18
-    repeat = 10
-    compute_logical_gap_proxy = False
-    include_cluster_stats = True
+    total_shots = round(5e7)
+    n_jobs = 126
+    repeat = 1
+    compute_logical_gap_proxy = True
+    include_cluster_stats = False
+    save = True
 
     decoder_prms = {
         "max_iter": 30,
@@ -194,12 +202,18 @@ if __name__ == "__main__":
     }
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    if noise_model == "circuit-level":
-        data_dir_name = "surface_minsum_iter30_lsd0_raw"
-    elif noise_model == "phenom":
-        data_dir_name = "surface_minsum_iter30_lsd0_phenom_raw"
+    if save:
+        if noise_model == "circuit-level":
+            if not compute_logical_gap_proxy:
+                data_dir_name = "surface_minsum_iter30_lsd0_raw"
+            else:
+                data_dir_name = "surface_minsum_iter30_lsd0_raw_gap_proxy"
+        elif noise_model == "phenom":
+            data_dir_name = "surface_minsum_iter30_lsd0_phenom_raw"
+        else:
+            raise ValueError(f"Invalid noise model: {noise_model}")
     else:
-        raise ValueError(f"Invalid noise model: {noise_model}")
+        data_dir_name = "temp"
 
     data_dir = os.path.join(current_dir, "data", data_dir_name)
     os.makedirs(data_dir, exist_ok=True)

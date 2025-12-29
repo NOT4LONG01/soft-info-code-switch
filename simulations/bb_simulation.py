@@ -163,16 +163,22 @@ if __name__ == "__main__":
         "ignore", message="A worker stopped while some jobs were given to the executor."
     )
 
-    plist = np.arange(1e-3, 4.1e-3, 1e-3).round(4)
-    nlist = [72, 144]  # [72, 108, 144, 288]
+    # plist = np.arange(1e-3, 4.1e-3, 1e-3).round(4)
+    # nlist = [72, 144]  # [72, 108, 144, 288]
+
+    plist = [0.003]
+    nlist = [144]
 
     shots_per_batch = round(1e7)
     total_shots = round(1e8)
-    compute_logical_gap_proxy = False
+    compute_logical_gap_proxy = True
     include_cluster_stats = True
-    n_jobs = 18
-    repeat = 10
-    dir_name = "bb_minsum_iter30_lsd0_raw"
+    n_jobs = 126
+    repeat = 1
+    if compute_logical_gap_proxy:
+        dir_name = "bb_minsum_iter30_lsd0_raw_gap_proxy"
+    else:
+        dir_name = "bb_minsum_iter30_lsd0_raw"
 
     # Estimated time (19 cores):
     # p=1e-3, n=144: 100,000 shots/min

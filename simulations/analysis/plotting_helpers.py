@@ -50,8 +50,8 @@ def error_band_plot(
 
     Returns
     -------
-    list of matplotlib Line2D objects
-        List containing the line objects created by the plot function.
+    matplotlib Line2D objects
+        line object created by the plot function.
     """
     x = np.asarray(x)
     y = np.asarray(y)
