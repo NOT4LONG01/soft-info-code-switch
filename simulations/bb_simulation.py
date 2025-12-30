@@ -30,6 +30,9 @@ def simulate(
     shots_per_batch: int = 1_000_000,
     decoder_prms: Dict[str, Any] | None = None,
     compute_logical_gap_proxy: bool = False,
+    explore_only_nearby_logical_classes: bool = False,
+    explore_random_logical_classes: int | None = None,
+    compute_all_random_gap_proxies: bool = False,
     include_cluster_stats: bool = True,
 ) -> None:
     """
@@ -58,6 +61,16 @@ def simulate(
         Parameters for the SoftOutputsBpLsdDecoder.
     compute_logical_gap_proxy : bool, optional
         Whether to compute logical gap proxy. Defaults to False.
+    explore_only_nearby_logical_classes : bool, optional
+        Whether to explore only adjacent logical classes for gap proxy computation.
+        Only used when compute_logical_gap_proxy is True. Defaults to False.
+    explore_random_logical_classes : int, optional
+        If given, explore a random subset of logical classes for gap proxy computation.
+        Only used when compute_logical_gap_proxy is True. Defaults to None.
+    compute_all_random_gap_proxies : bool, optional
+        If True and explore_random_logical_classes is given, compute additional gap
+        proxies `gap_proxy_{i}` for all i from 2 up to the explored number of logical
+        classes. Only used when compute_logical_gap_proxy is True. Defaults to False.
     include_cluster_stats : bool, optional
         Whether to include cluster statistics. Defaults to True.
 
@@ -123,6 +136,9 @@ def simulate(
             repeat=repeat,
             decoder_prms=decoder_prms,
             compute_logical_gap_proxy=compute_logical_gap_proxy,
+            explore_only_nearby_logical_classes=explore_only_nearby_logical_classes,
+            explore_random_logical_classes=explore_random_logical_classes,
+            compute_all_random_gap_proxies=compute_all_random_gap_proxies,
             include_cluster_stats=include_cluster_stats,
         )
 
@@ -169,14 +185,21 @@ if __name__ == "__main__":
     plist = [0.003]
     nlist = [144]
 
-    shots_per_batch = round(1e7)
-    total_shots = round(1e8)
+    shots_per_batch = round(1e5)
+    total_shots = round(1e6)
     compute_logical_gap_proxy = True
-    include_cluster_stats = True
-    n_jobs = 126
+    include_cluster_stats = False
+    explore_only_nearby_logical_classes = True
+    explore_random_logical_classes = None
+
+    n_jobs = 62
     repeat = 1
     if compute_logical_gap_proxy:
-        dir_name = "bb_minsum_iter30_lsd0_raw_gap_proxy"
+        if explore_only_nearby_logical_classes:
+            dir_name = f"bb_minsum_iter30_lsd0_raw_gap_proxy_nearby"
+        else:
+            assert explore_random_logical_classes is not None
+            dir_name = f"bb_minsum_iter30_lsd0_raw_gap_proxy_random_{explore_random_logical_classes}"
     else:
         dir_name = "bb_minsum_iter30_lsd0_raw"
 
@@ -203,6 +226,8 @@ if __name__ == "__main__":
     print("plist =", plist)
     print("decoder_prms =", decoder_prms)
     print("compute_logical_gap_proxy =", compute_logical_gap_proxy)
+    print("explore_only_nearby_logical_classes =", explore_only_nearby_logical_classes)
+    print("explore_random_logical_classes =", explore_random_logical_classes)
 
     print(f"\n==== Starting simulations up to {total_shots} shots ====")
     for n in nlist:
@@ -220,6 +245,8 @@ if __name__ == "__main__":
                 decoder_prms=decoder_prms,
                 compute_logical_gap_proxy=compute_logical_gap_proxy,
                 include_cluster_stats=include_cluster_stats,
+                explore_only_nearby_logical_classes=explore_only_nearby_logical_classes,
+                explore_random_logical_classes=explore_random_logical_classes,
             )
 
     t0 = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

@@ -30,6 +30,7 @@ def simulate(
     decoder_prms: Dict[str, Any] | None = None,
     noise_model: str = "circuit-level",
     compute_logical_gap_proxy: bool = False,
+    compute_all_random_gap_proxies: bool = False,
     include_cluster_stats: bool = True,
 ) -> None:
     """
@@ -61,6 +62,10 @@ def simulate(
     compute_logical_gap_proxy : bool, default=False
         Whether to compute logical gap proxy. When True, cluster stats are
         automatically disabled (mutually exclusive).
+    compute_all_random_gap_proxies : bool, default=False
+        If True and explore_random_logical_classes is given, compute additional gap
+        proxies `gap_proxy_{i}` for all i from 2 up to the explored number of logical
+        classes. Only used when compute_logical_gap_proxy is True.
     include_cluster_stats : bool, default=True
         Whether to include cluster statistics.
 
@@ -128,6 +133,7 @@ def simulate(
             repeat=repeat,
             decoder_prms=decoder_prms,
             compute_logical_gap_proxy=compute_logical_gap_proxy,
+            compute_all_random_gap_proxies=compute_all_random_gap_proxies,
             include_cluster_stats=include_cluster_stats,
         )
 
@@ -186,9 +192,9 @@ if __name__ == "__main__":
     noise_model = "circuit-level"
     # noise_model = "phenom"
 
-    shots_per_batch = round(1e7)
+    shots_per_batch = round(5e6)
     total_shots = round(5e7)
-    n_jobs = 126
+    n_jobs = 62
     repeat = 1
     compute_logical_gap_proxy = True
     include_cluster_stats = False

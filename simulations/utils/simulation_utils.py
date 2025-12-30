@@ -129,6 +129,9 @@ def bplsd_simulation_task_single(
     circuit: stim.Circuit,
     decoder_prms: Dict[str, Any] | None = None,
     compute_logical_gap_proxy: bool = False,
+    explore_only_nearby_logical_classes: bool = False,
+    explore_random_logical_classes: int | None = None,
+    compute_all_random_gap_proxies: bool = False,
     include_cluster_stats: bool = True,
 ) -> Tuple[
     np.ndarray,
@@ -152,6 +155,16 @@ def bplsd_simulation_task_single(
         Parameters for the SoftOutputsBpLsdDecoder.
     compute_logical_gap_proxy : bool, optional
         Whether to compute logical gap proxy. Defaults to False.
+    explore_only_nearby_logical_classes : bool, optional
+        Whether to explore only adjacent logical classes for gap proxy computation.
+        Only used when compute_logical_gap_proxy is True. Defaults to False.
+    explore_random_logical_classes : int, optional
+        If given, explore a random subset of logical classes for gap proxy computation.
+        Only used when compute_logical_gap_proxy is True. Defaults to None.
+    compute_all_random_gap_proxies : bool, optional
+        If True and explore_random_logical_classes is given, compute additional gap
+        proxies `gap_proxy_{i}` for all i from 2 up to the explored number of logical
+        classes. Only used when compute_logical_gap_proxy is True. Defaults to False.
     include_cluster_stats : bool, optional
         Whether to include cluster statistics. Defaults to True.
     Returns
@@ -200,6 +213,9 @@ def bplsd_simulation_task_single(
         pred, pred_bp, converge, soft_info = decoder.decode(
             det_sng,
             compute_logical_gap_proxy=compute_logical_gap_proxy,
+            explore_only_nearby_logical_classes=explore_only_nearby_logical_classes,
+            explore_random_logical_classes=explore_random_logical_classes,
+            compute_all_random_gap_proxies=compute_all_random_gap_proxies,
             include_cluster_stats=include_cluster_stats,
         )
 
@@ -214,6 +230,14 @@ def bplsd_simulation_task_single(
         }
         if compute_logical_gap_proxy:
             scalar_dict["gap_proxy"] = soft_info["gap_proxy"]
+            if compute_all_random_gap_proxies:
+                scalar_dict.update(
+                    {
+                        k: v
+                        for k, v in soft_info.items()
+                        if k.startswith("gap_proxy_")
+                    }
+                )
         scalar_soft_infos_list.append(scalar_dict)
 
         if include_cluster_stats:
@@ -277,6 +301,9 @@ def bplsd_simulation_task_parallel(
     repeat: int = 10,
     decoder_prms: Dict[str, Any] | None = None,
     compute_logical_gap_proxy: bool = False,
+    explore_only_nearby_logical_classes: bool = False,
+    explore_random_logical_classes: int | None = None,
+    compute_all_random_gap_proxies: bool = False,
     include_cluster_stats: bool = True,
 ) -> Tuple[pd.DataFrame, sparse.csr_array | None, sparse.csr_array, sparse.csr_array]:
     """
@@ -296,6 +323,16 @@ def bplsd_simulation_task_parallel(
         Parameters for the decoder.
     compute_logical_gap_proxy : bool, optional
         Whether to compute logical gap proxy. Defaults to False.
+    explore_only_nearby_logical_classes : bool, optional
+        Whether to explore only adjacent logical classes for gap proxy computation.
+        Only used when compute_logical_gap_proxy is True. Defaults to False.
+    explore_random_logical_classes : int, optional
+        If given, explore a random subset of logical classes for gap proxy computation.
+        Only used when compute_logical_gap_proxy is True. Defaults to None.
+    compute_all_random_gap_proxies : bool, optional
+        If True and explore_random_logical_classes is given, compute additional gap
+        proxies `gap_proxy_{i}` for all i from 2 up to the explored number of logical
+        classes. Only used when compute_logical_gap_proxy is True. Defaults to False.
     include_cluster_stats : bool, optional
         Whether to include cluster statistics. Defaults to True.
 
@@ -327,6 +364,9 @@ def bplsd_simulation_task_parallel(
             circuit=circuit,
             decoder_prms=decoder_prms,
             compute_logical_gap_proxy=compute_logical_gap_proxy,
+            explore_only_nearby_logical_classes=explore_only_nearby_logical_classes,
+            explore_random_logical_classes=explore_random_logical_classes,
+            compute_all_random_gap_proxies=compute_all_random_gap_proxies,
             include_cluster_stats=include_cluster_stats,
         )
         for chunk in chunk_sizes

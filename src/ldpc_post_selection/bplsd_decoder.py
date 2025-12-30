@@ -355,8 +355,9 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         original_pred_llr: float,
         explore_only_nearby_logical_classes: bool,
         explore_random_logical_classes: Optional[int] = None,
+        compute_all_random_gap_proxies: bool = False,
         verbose: bool = False,
-    ) -> Tuple[float, np.ndarray, float]:
+    ) -> Tuple[float, np.ndarray, float, Dict[int, float]]:
         """
         Compute logical gap proxy by exploring different logical classes iteratively.
 
@@ -375,6 +376,10 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             logical classes (excluding the initial best class) and compute the gap
             proxy using only the explored classes. Cannot be used together with
             explore_only_nearby_logical_classes.
+        compute_all_random_gap_proxies : bool, optional
+            If True and explore_random_logical_classes is given, compute and store
+            gap proxies for all intermediate numbers of explored logical classes.
+            Defaults to False.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
 
@@ -386,6 +391,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             Best predicted error pattern (corresponding to minimum pred_llr).
         best_pred_llr : float
             Best prediction LLR (minimum among all explored).
+        gap_proxies_by_num_classes : dict of int to float
+            Dictionary mapping the number of explored logical classes to the
+            corresponding gap proxy. Only populated when
+            compute_all_random_gap_proxies is True and
+            explore_random_logical_classes is given.
         """
         if verbose:
             print("  Computing logical gap proxy...")
@@ -393,7 +403,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         if self.obs_matrix is None:
             if verbose:
                 print("  No observables, returning original results")
-            return 0.0, pred, original_pred_llr
+            return 0.0, pred, original_pred_llr, {}
 
         # Calculate original logical class
         original_logical_class = (
@@ -420,11 +430,48 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 verbose=verbose,
             )
 
+            gap_proxies_by_num_classes: Dict[int, float] = {}
+            best_pred_llr = float(original_pred_llr)
+            best_pred = pred
+            best_logical_class_tuple = tuple(original_logical_class)
+            second_best_pred_llr = float("inf")
+            explored_count = 1
+
             for logical_class in random_logical_classes:
                 pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
                     detector_outcomes, logical_class, verbose=verbose
                 )
-                explored_classes[tuple(logical_class)] = (pred_llr, pred_pattern)
+                logical_class_tuple = tuple(logical_class)
+                explored_classes[logical_class_tuple] = (pred_llr, pred_pattern)
+
+                explored_count += 1
+                pred_llr = float(pred_llr)
+                if pred_llr <= best_pred_llr:
+                    second_best_pred_llr = best_pred_llr
+                    best_pred_llr = pred_llr
+                    best_pred = pred_pattern
+                    best_logical_class_tuple = logical_class_tuple
+                elif pred_llr < second_best_pred_llr:
+                    second_best_pred_llr = pred_llr
+
+                if compute_all_random_gap_proxies and explored_count >= 2:
+                    gap_proxies_by_num_classes[explored_count] = float(
+                        second_best_pred_llr - best_pred_llr
+                    )
+
+            if second_best_pred_llr == float("inf"):
+                second_best_pred_llr = best_pred_llr
+
+            gap_proxy = float(second_best_pred_llr - best_pred_llr)
+
+            if verbose:
+                print(f"  Total logical classes explored: {len(explored_classes)}")
+                print(f"  Best pred_llr: {best_pred_llr:.4f}")
+                print(f"  Second best pred_llr: {second_best_pred_llr:.4f}")
+                print(f"  Gap proxy: {gap_proxy:.4f}")
+                print(f"  Best logical class: {np.array(best_logical_class_tuple)}")
+
+            return gap_proxy, best_pred, best_pred_llr, gap_proxies_by_num_classes
 
         elif not explore_only_nearby_logical_classes:
             # Explore all classes (except the initial one)
@@ -521,7 +568,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             print(f"  Gap proxy: {gap_proxy:.4f}")
             print(f"  Best logical class: {np.array(best_logical_class_tuple)}")
 
-        return gap_proxy, best_pred, best_pred_llr
+        return gap_proxy, best_pred, best_pred_llr, {}
 
     def _hash_matrix_and_priors(self, H_matrix: csc_matrix, priors: np.ndarray) -> str:
         """
@@ -675,6 +722,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         compute_logical_gap_proxy: bool = False,
         explore_only_nearby_logical_classes: bool = False,
         explore_random_logical_classes: Optional[int] = None,
+        compute_all_random_gap_proxies: bool = False,
         verbose: bool = False,
         _benchmarking: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray, bool, Dict[str, Any]]:
@@ -702,6 +750,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             uniformly at random from all other logical classes. Only used when
             compute_logical_gap_proxy is True. Cannot be used together with
             explore_only_nearby_logical_classes. Defaults to None.
+        compute_all_random_gap_proxies : bool, optional
+            If True and explore_random_logical_classes is given, compute additional
+            gap proxies `gap_proxy_{i}` for all i from 2 up to the explored number
+            of logical classes. Only used when compute_logical_gap_proxy is True.
+            Defaults to False.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
         _benchmarking : bool
@@ -726,6 +779,8 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             - cluster_llrs (1D numpy array of float): LLRs of clusters and the remaining
             region (cluster_llrs[-1])
             - gap_proxy (float): Logical gap proxy (only if compute_logical_gap_proxy=True)
+            - gap_proxy_{i} (float): Logical gap proxy after exploring i logical classes
+              (only if compute_all_random_gap_proxies=True and explore_random_logical_classes is not None)
             - cluster_size_norm_frac_{order} (float): Norm fraction of cluster sizes for each order
             - cluster_llr_norm_frac_{order} (float): Norm fraction of cluster LLRs for each order
         """
@@ -864,12 +919,18 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             if _benchmarking:
                 gap_start = time.time()
 
-            gap_proxy, best_pred, best_pred_llr = self._compute_logical_gap_proxy(
+            (
+                gap_proxy,
+                best_pred,
+                best_pred_llr,
+                gap_proxies_by_num_classes,
+            ) = self._compute_logical_gap_proxy(
                 detector_outcomes,
                 pred,
                 soft_outputs["pred_llr"],
                 explore_only_nearby_logical_classes,
                 explore_random_logical_classes=explore_random_logical_classes,
+                compute_all_random_gap_proxies=compute_all_random_gap_proxies,
                 verbose=verbose,
             )
 
@@ -880,6 +941,9 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 gap_start = time.time()
 
             soft_outputs["gap_proxy"] = gap_proxy
+            if compute_all_random_gap_proxies and gap_proxies_by_num_classes:
+                for num_classes, gap in sorted(gap_proxies_by_num_classes.items()):
+                    soft_outputs[f"gap_proxy_{num_classes}"] = gap
 
             # Update prediction and related soft outputs if a better one was found
             if best_pred_llr < soft_outputs["pred_llr"]:

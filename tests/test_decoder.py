@@ -189,6 +189,43 @@ class TestSoftOutputsBpLsdDecoder:
         assert not np.isnan(soft_outputs2["gap_proxy"])
         assert soft_outputs2["gap_proxy"] >= 0.0
 
+    def test_logical_gap_proxy_random_logical_classes_all_gap_proxies(self, circuit_data):
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        current_num_bits = decoder.H.shape[1]
+
+        if decoder.obs_matrix.shape[0] < 3:
+            original_obs_matrix = decoder.obs_matrix.toarray()
+            num_dummy_obs_to_add = 3 - original_obs_matrix.shape[0]
+            dummy_obs = np.zeros((num_dummy_obs_to_add, current_num_bits), dtype=bool)
+            for i in range(num_dummy_obs_to_add):
+                dummy_obs[i, i % current_num_bits] = True
+            if original_obs_matrix.shape[0] > 0:
+                new_obs_matrix_arr = np.vstack([original_obs_matrix, dummy_obs])
+            else:
+                new_obs_matrix_arr = dummy_obs
+
+            decoder = SoftOutputsBpLsdDecoder(
+                H=decoder.H, p=decoder.priors, obs_matrix=csc_matrix(new_obs_matrix_arr)
+            )
+
+        random.seed(0)
+        _, _, _, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            explore_random_logical_classes=4,
+            compute_all_random_gap_proxies=True,
+        )
+
+        for i in [2, 3, 4]:
+            key = f"gap_proxy_{i}"
+            assert key in soft_outputs
+            assert isinstance(soft_outputs[key], float)
+            assert not np.isnan(soft_outputs[key])
+            assert soft_outputs[key] >= 0.0
+
+        assert "gap_proxy" in soft_outputs
+        assert np.isclose(soft_outputs["gap_proxy"], soft_outputs["gap_proxy_4"])
+
     def test_logical_gap_proxy_random_classes_invalid_params(self, circuit_data):
         decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
 

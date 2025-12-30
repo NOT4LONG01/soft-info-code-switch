@@ -30,6 +30,7 @@ def simulate(
     shots_per_batch: int = 1_000_000,
     decoder_prms: Dict[str, Any] | None = None,
     compute_logical_gap_proxy: bool = False,
+    compute_all_random_gap_proxies: bool = False,
     include_cluster_stats: bool = True,
 ) -> None:
     """
@@ -66,6 +67,10 @@ def simulate(
         Parameters for the SoftOutputsBpLsdDecoder.
     compute_logical_gap_proxy : bool, optional
         Whether to compute logical gap proxy. Defaults to False.
+    compute_all_random_gap_proxies : bool, optional
+        If True and explore_random_logical_classes is given, compute additional gap
+        proxies `gap_proxy_{i}` for all i from 2 up to the explored number of logical
+        classes. Only used when compute_logical_gap_proxy is True. Defaults to False.
     include_cluster_stats : bool, optional
         Whether to include cluster statistics. Defaults to True.
 
@@ -141,6 +146,7 @@ def simulate(
             repeat=repeat,
             decoder_prms=decoder_prms,
             compute_logical_gap_proxy=compute_logical_gap_proxy,
+            compute_all_random_gap_proxies=compute_all_random_gap_proxies,
             include_cluster_stats=include_cluster_stats,
         )
 
