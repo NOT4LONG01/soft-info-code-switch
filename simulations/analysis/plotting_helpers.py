@@ -20,6 +20,7 @@ def error_band_plot(
     ax: matplotlib.axes.Axes | None = None,
     color: str | None = None,
     alpha: float = 0.3,
+    max_points: int | None = None,
     **kwargs,
 ) -> list[matplotlib.lines.Line2D]:
     """
@@ -45,6 +46,10 @@ def error_band_plot(
     alpha : float, optional
         Transparency level for the error band fill. Must be between 0 (transparent)
         and 1 (opaque). Default is 0.3.
+    max_points : int or None, optional
+        Maximum number of points to plot. If specified and the data has more points,
+        the data will be uniformly downsampled. Useful for reducing complexity when
+        saving figures with PGF/LaTeX backend. Default is None (no downsampling).
     **kwargs
         Additional keyword arguments passed to the matplotlib plot function.
 
@@ -59,6 +64,13 @@ def error_band_plot(
 
     if x.ndim != 1 or y.ndim != 1 or delta_y.ndim != 1:
         raise ValueError("x, y, and delta_y must be 1D arrays")
+
+    # Downsample if max_points is specified and data exceeds the limit
+    if max_points is not None and len(x) > max_points:
+        indices = np.linspace(0, len(x) - 1, max_points, dtype=int)
+        x = x[indices]
+        y = y[indices]
+        delta_y = delta_y[indices]
 
     if ax is None:
         ax = plt.gca()
