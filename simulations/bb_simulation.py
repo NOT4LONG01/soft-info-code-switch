@@ -191,6 +191,7 @@ if __name__ == "__main__":
     include_cluster_stats = False
     explore_only_nearby_logical_classes = True
     explore_random_logical_classes = None
+    compute_all_random_gap_proxies = True
 
     n_jobs = 62
     repeat = 1
@@ -247,6 +248,7 @@ if __name__ == "__main__":
                 include_cluster_stats=include_cluster_stats,
                 explore_only_nearby_logical_classes=explore_only_nearby_logical_classes,
                 explore_random_logical_classes=explore_random_logical_classes,
+                compute_all_random_gap_proxies=compute_all_random_gap_proxies,
             )
 
     t0 = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
