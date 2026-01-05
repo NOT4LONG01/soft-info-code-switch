@@ -130,6 +130,37 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             self._detector_time_coords = det_time_coords
             return det_time_coords.copy()
 
+    @property
+    def _H_obs_appended(self) -> Optional[csc_matrix]:
+        """Lazily compute and cache H with obs_matrix appended."""
+        if not hasattr(self, "_H_obs_appended_cache"):
+            if self.obs_matrix is None:
+                self._H_obs_appended_cache = None
+            else:
+                self._H_obs_appended_cache = vstack(
+                    [self.H, self.obs_matrix], format="csc", dtype="uint8"
+                )
+        return self._H_obs_appended_cache
+
+    @property
+    def _decoder_for_fixed_class(self) -> Optional["SoftOutputsBpLsdDecoder"]:
+        """Lazily create and cache decoder for fixed-logical-class decoding."""
+        if not hasattr(self, "_decoder_for_fixed_class_cache"):
+            if self._H_obs_appended is None:
+                self._decoder_for_fixed_class_cache = None
+            else:
+                self._decoder_for_fixed_class_cache = SoftOutputsBpLsdDecoder(
+                    H=self._H_obs_appended,
+                    p=self.priors,
+                    obs_matrix=None,  # Prevent recursion
+                    max_iter=self._bplsd.max_iter,
+                    bp_method=self._bplsd.bp_method,
+                    lsd_method=self._bplsd.lsd_method,
+                    lsd_order=self._bplsd.lsd_order,
+                    ms_scaling_factor=self._bplsd.ms_scaling_factor,
+                )
+        return self._decoder_for_fixed_class_cache
+
     def _check_detector_time_coords_validity(self):
         time_coords = self.detector_time_coords
         if min(time_coords) != 0:
@@ -241,10 +272,18 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             )
 
         # Integer representation where bit i corresponds to excluded_logical_class[i]
-        excluded_logical_class_int = 0
-        for bit_index, bit in enumerate(excluded_logical_class.tolist()):
-            if bit:
-                excluded_logical_class_int |= 1 << bit_index
+        if num_observables <= 64:
+            # Vectorized path (fast)
+            powers_of_two = np.uint64(1) << np.arange(num_observables, dtype=np.uint64)
+            excluded_logical_class_int = int(
+                excluded_logical_class.astype(np.uint64) @ powers_of_two
+            )
+        else:
+            # Fallback for >64 observables (uses Python arbitrary-precision int)
+            excluded_logical_class_int = 0
+            for bit_index, bit in enumerate(excluded_logical_class.tolist()):
+                if bit:
+                    excluded_logical_class_int |= 1 << bit_index
 
         sampled_class_ints: List[int]
         if num_observables <= 62:
@@ -263,16 +302,30 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 selected.add(candidate)
             sampled_class_ints = list(selected)
 
-        sampled_logical_classes = [
-            np.array(
-                [
-                    (logical_class_int >> bit_index) & 1
-                    for bit_index in range(num_observables)
-                ],
-                dtype=bool,
-            )
-            for logical_class_int in sampled_class_ints
-        ]
+        if num_observables <= 64:
+            # Vectorized path for typical cases (fast)
+            sampled_class_ints_arr = np.array(sampled_class_ints, dtype=np.uint64)[
+                :, np.newaxis
+            ]
+            bit_positions = np.arange(num_observables, dtype=np.uint64)
+            sampled_logical_classes_arr = (
+                (sampled_class_ints_arr >> bit_positions) & 1
+            ).astype(bool)
+            sampled_logical_classes = [
+                row.copy() for row in sampled_logical_classes_arr
+            ]
+        else:
+            # Fallback for >64 observables (uses Python arbitrary-precision int)
+            sampled_logical_classes = [
+                np.array(
+                    [
+                        (logical_class_int >> bit_index) & 1
+                        for bit_index in range(num_observables)
+                    ],
+                    dtype=bool,
+                )
+                for logical_class_int in sampled_class_ints
+            ]
 
         if verbose:
             print(
@@ -290,6 +343,8 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
     ) -> Tuple[float, np.ndarray]:
         """
         Perform fixed-logical-class decoding for a given logical class.
+
+        Uses cached decoder for efficiency when exploring multiple logical classes.
 
         Parameters
         ----------
@@ -312,21 +367,13 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 f"    Performing fixed-logical-class decoding for class {fixed_logical_class}"
             )
 
-        # Construct H_obs_appended by vertically stacking H and obs_matrix
-        H_obs_appended = vstack([self.H, self.obs_matrix], format="csc", dtype="uint8")
-
-        # Create new decoder with appended matrix
-        # Use same parameters as the original decoder, but no obs_matrix to avoid recursion
-        decoder_fixed = SoftOutputsBpLsdDecoder(
-            H=H_obs_appended,
-            p=self.priors,
-            obs_matrix=None,  # No observables for the fixed decoder to prevent recursion
-            max_iter=self._bplsd.max_iter,
-            bp_method=self._bplsd.bp_method,
-            lsd_method=self._bplsd.lsd_method,
-            lsd_order=self._bplsd.lsd_order,
-            ms_scaling_factor=self._bplsd.ms_scaling_factor,
-        )
+        # Use cached decoder with explicit guard
+        decoder_fixed = self._decoder_for_fixed_class
+        if decoder_fixed is None:
+            raise ValueError(
+                "Cannot perform fixed-logical-class decoding without obs_matrix. "
+                "Ensure obs_matrix is provided during decoder initialization."
+            )
 
         # Construct detector_outcomes_obs_appended
         detector_outcomes_obs_appended = np.concatenate(
@@ -698,6 +745,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         """
         self._window_structure_cache.clear()
         self._decoder_cache.clear()
+        # Clear fixed-class decoder caches
+        if hasattr(self, "_H_obs_appended_cache"):
+            del self._H_obs_appended_cache
+        if hasattr(self, "_decoder_for_fixed_class_cache"):
+            del self._decoder_for_fixed_class_cache
 
     def get_cache_info(self) -> Dict[str, int]:
         """
