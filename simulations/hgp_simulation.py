@@ -205,8 +205,8 @@ if __name__ == "__main__":
 
     plist = [1e-3]
 
-    shots_per_batch = round(1e6)
-    total_shots = round(1e7)
+    shots_per_batch = round(1e4)
+    total_shots = round(1e6)
     compute_logical_gap_proxy = True
     include_cluster_stats = False
     explore_only_nearby_logical_classes = True
