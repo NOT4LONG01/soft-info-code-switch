@@ -12,6 +12,7 @@ from simulations.utils.simulation_utils import (
     _get_optimal_uint_dtype,
     get_existing_shots,
     bplsd_simulation_task_parallel,
+    precompute_logical_error_distribution,
 )
 from simulations.utils.simulation_utils_legacy import (
     bplsd_simulation_task_parallel_legacy,
@@ -33,6 +34,8 @@ def simulate(
     logical_gap_proxy_method: str | None = None,
     num_classes_to_explore: int | None = None,
     compute_all_intermediate_gap_proxies: bool = False,
+    logical_error_distribution: np.ndarray | None = None,
+    precompute_distribution_shots: int | None = None,
     include_cluster_stats: bool = True,
 ) -> None:
     """
@@ -66,15 +69,25 @@ def simulate(
         - None: Explore all possible logical classes (exact gap proxy).
         - 'nearby': Only explore nearby logical classes (flip one bit at a time).
         - 'random': Randomly sample logical classes for exploration.
+        - 'most-likely-first': Select classes based on prior logical error distribution.
         Only used when compute_logical_gap_proxy is True. Defaults to None.
     num_classes_to_explore : int, optional
         Total number of logical classes to explore including the initial best class.
-        Required when `logical_gap_proxy_method` is 'random'. Only used when
-        compute_logical_gap_proxy is True. Defaults to None.
+        Required when `logical_gap_proxy_method` is 'random' or 'most-likely-first'.
+        Only used when compute_logical_gap_proxy is True. Defaults to None.
     compute_all_intermediate_gap_proxies : bool, optional
-        If True and `logical_gap_proxy_method` is 'random', compute additional gap
-        proxies `gap_proxy_{i}` for all i from 2 up to the explored number of logical
-        classes. Only used when compute_logical_gap_proxy is True. Defaults to False.
+        If True and `logical_gap_proxy_method` is 'random' or 'most-likely-first',
+        compute additional gap proxies `gap_proxy_{i}` for all i from 2 up to the
+        explored number of logical classes. Only used when compute_logical_gap_proxy
+        is True. Defaults to False.
+    logical_error_distribution : 1D numpy array of float, optional
+        Pre-computed logical error distribution for 'most-likely-first' method.
+        If None and method is 'most-likely-first', will be computed automatically
+        using `precompute_distribution_shots`. Defaults to None.
+    precompute_distribution_shots : int, optional
+        Number of shots to use for pre-computing logical error distribution when
+        `logical_gap_proxy_method` is 'most-likely-first' and no distribution is
+        provided. Defaults to None (uses 100,000 shots).
     include_cluster_stats : bool, optional
         Whether to include cluster statistics. Defaults to True.
 
@@ -111,6 +124,23 @@ def simulate(
         decoder = SoftOutputsBpLsdDecoder(circuit=circuit)
         np.save(prior_path, decoder.priors)
 
+    # Pre-compute logical error distribution for 'most-likely-first' method
+    if (
+        logical_gap_proxy_method == "most-likely-first"
+        and logical_error_distribution is None
+    ):
+        distribution_path = os.path.join(sub_data_dir, "logical_error_distribution.npy")
+        if precompute_distribution_shots is None:
+            precompute_distribution_shots = 100_000
+
+        logical_error_distribution = precompute_logical_error_distribution(
+            circuit=circuit,
+            save_path=distribution_path,
+            shots=precompute_distribution_shots,
+            n_jobs=n_jobs,
+            decoder_params=decoder_prms,
+        )
+
     # Determine the next file index
     next_idx = (
         max([info[0] for info in existing_files_info], default=0) + 1
@@ -143,6 +173,7 @@ def simulate(
             logical_gap_proxy_method=logical_gap_proxy_method,
             num_classes_to_explore=num_classes_to_explore,
             compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
+            logical_error_distribution=logical_error_distribution,
             include_cluster_stats=include_cluster_stats,
         )
 
@@ -189,13 +220,18 @@ if __name__ == "__main__":
     plist = [0.003]
     nlist = [144]
 
-    shots_per_batch = round(1e5)
+    shots_per_batch = round(1e4)
     total_shots = round(1e6)
     compute_logical_gap_proxy = True
     include_cluster_stats = False
-    logical_gap_proxy_method = "random"  # None, 'nearby', or 'random'
-    num_classes_to_explore = 24  # Required when method is 'random'
+    logical_gap_proxy_method = (
+        "most-likely-first"  # None, 'nearby', 'random', or 'most-likely-first'
+    )
+    num_classes_to_explore = (
+        24  # Required when method is 'random' or 'most-likely-first'
+    )
     compute_all_intermediate_gap_proxies = True
+    precompute_distribution_shots = 1000 * 2**12
 
     n_jobs = 126
     repeat = 1
@@ -207,18 +243,15 @@ if __name__ == "__main__":
             dir_name = (
                 f"bb_minsum_iter30_lsd0_raw_gap_proxy_random_{num_classes_to_explore}"
             )
+        elif logical_gap_proxy_method == "most-likely-first":
+            assert num_classes_to_explore is not None
+            dir_name = (
+                f"bb_minsum_iter30_lsd0_raw_gap_proxy_mlf_{num_classes_to_explore}"
+            )
         else:
             dir_name = "bb_minsum_iter30_lsd0_raw_gap_proxy"
     else:
         dir_name = "bb_minsum_iter30_lsd0_raw"
-
-    # Estimated time (19 cores):
-    # p=1e-3, n=144: 100,000 shots/min
-    # p=3e-3, n=144: 50,000 shots/min
-    # p=5e-3, n=144: 12,500 shots/min
-    # p=1e-3, n=72: 1,000,000 shots/min
-    # p=3e-3, n=72: 500,000 shots/min
-    # p=5e-3, n=72: 250,000 shots/min
 
     decoder_prms = {
         "max_iter": 30,
@@ -237,6 +270,8 @@ if __name__ == "__main__":
     print("compute_logical_gap_proxy =", compute_logical_gap_proxy)
     print("logical_gap_proxy_method =", logical_gap_proxy_method)
     print("num_classes_to_explore =", num_classes_to_explore)
+    if logical_gap_proxy_method == "most-likely-first":
+        print("precompute_distribution_shots =", precompute_distribution_shots)
 
     print(f"\n==== Starting simulations up to {total_shots} shots ====")
     for n in nlist:
@@ -257,6 +292,7 @@ if __name__ == "__main__":
                 logical_gap_proxy_method=logical_gap_proxy_method,
                 num_classes_to_explore=num_classes_to_explore,
                 compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
+                precompute_distribution_shots=precompute_distribution_shots,
             )
 
     t0 = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

@@ -1,6 +1,7 @@
 import os
 import re
 import warnings
+from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
@@ -12,6 +13,9 @@ from scipy import sparse
 from ldpc_post_selection.decoder import (
     SoftOutputsBpLsdDecoder,
     SoftOutputsMatchingDecoder,
+)
+from ldpc_post_selection.logical_error_distribution import (
+    collect_logical_error_distribution_fast,
 )
 
 
@@ -122,6 +126,125 @@ def _get_optimal_uint_dtype(max_val: int) -> np.dtype:
         return np.uint32
     else:
         return np.uint64
+
+
+def precompute_logical_error_distribution(
+    circuit: stim.Circuit,
+    save_path: str,
+    shots: int = 100_000,
+    n_jobs: int = 1,
+    decoder_params: Dict[str, Any] | None = None,
+    base_seed: int = 42,
+    verbose: bool = True,
+) -> np.ndarray:
+    """
+    Pre-compute logical error distribution using parallel processing.
+
+    This function first checks if a distribution file already exists at the
+    specified path. If so, it loads and returns the existing distribution.
+    Otherwise, it computes the distribution in parallel and saves it.
+
+    Parameters
+    ----------
+    circuit : stim.Circuit
+        Quantum error correction circuit to simulate.
+    save_path : str
+        Path to save/load the distribution file (.npy format).
+    shots : int, optional
+        Total number of shots to use for computing the distribution.
+        Defaults to 100,000.
+    n_jobs : int, optional
+        Number of parallel workers. Defaults to 1.
+    decoder_params : dict, optional
+        Parameters for the decoder. Defaults to None.
+    base_seed : int, optional
+        Base random seed. Each worker uses base_seed + worker_index for
+        diversity. Defaults to 42.
+    verbose : bool, optional
+        Whether to print progress messages. Defaults to True.
+
+    Returns
+    -------
+    distribution : 1D numpy array of int with shape (2^k,)
+        Counts of each logical error where k is the number of observables.
+        Index i corresponds to logical error with bit pattern i = sum(b_j * 2^j).
+        Index 0 represents no logical error (correct decoding).
+
+    Examples
+    --------
+    >>> import stim
+    >>> circuit = stim.Circuit.generated(
+    ...     "surface_code:rotated_memory_z",
+    ...     distance=3,
+    ...     rounds=3,
+    ...     after_clifford_depolarization=0.01,
+    ... )
+    >>> distribution = precompute_logical_error_distribution(
+    ...     circuit=circuit,
+    ...     save_path="/tmp/distribution.npy",
+    ...     shots=10000,
+    ...     n_jobs=4,
+    ... )
+    """
+    # Check if distribution file already exists
+    if os.path.exists(save_path):
+        distribution = np.load(save_path)
+        if verbose:
+            print(f"   Loaded existing logical error distribution from {save_path}")
+        return distribution
+
+    # Distribute shots across workers
+    num_workers = min(n_jobs, shots)
+    shots_per_worker = shots // num_workers
+    remainder = shots % num_workers
+    worker_shots = [
+        shots_per_worker + (1 if i < remainder else 0) for i in range(num_workers)
+    ]
+
+    if verbose:
+        print(
+            f"   Pre-computing logical error distribution with {shots} shots "
+            f"using {num_workers} workers..."
+        )
+    t0_dist = datetime.now()
+
+    # Run parallel distribution collection
+    results = Parallel(n_jobs=num_workers)(
+        delayed(collect_logical_error_distribution_fast)(
+            circuit=circuit,
+            shots=worker_shot_count,
+            decoder_params=decoder_params,
+            seed=base_seed + i,  # Different seed per worker for diversity
+        )
+        for i, worker_shot_count in enumerate(worker_shots)
+    )
+
+    # Aggregate distributions from all workers
+    distribution = sum(dist for dist, _ in results)
+    total_shots = sum(meta["total_shots"] for _, meta in results)
+    correct_count = distribution[0]
+    logical_error_rate = 1.0 - (correct_count / total_shots)
+    nonzero_errors = int(np.sum(distribution[1:] > 0))
+
+    t1_dist = datetime.now()
+    elapsed = (t1_dist - t0_dist).total_seconds()
+
+    # Ensure directory exists
+    save_dir = os.path.dirname(save_path)
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+
+    # Save distribution
+    np.save(save_path, distribution)
+    if verbose:
+        print(
+            f"   Logical error distribution computed in {elapsed:.1f}s "
+            f"(error rate: {logical_error_rate:.4f}, "
+            f"nonzero errors: {nonzero_errors}). "
+            f"Saved to {save_path}"
+        )
+
+    return distribution
 
 
 def bplsd_simulation_task_single(
