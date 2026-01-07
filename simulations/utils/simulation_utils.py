@@ -132,6 +132,7 @@ def bplsd_simulation_task_single(
     logical_gap_proxy_method: str | None = None,
     num_classes_to_explore: int | None = None,
     compute_all_intermediate_gap_proxies: bool = False,
+    logical_error_distribution: np.ndarray | None = None,
     include_cluster_stats: bool = True,
 ) -> Tuple[
     np.ndarray,
@@ -160,15 +161,21 @@ def bplsd_simulation_task_single(
         - None: Explore all possible logical classes (exact gap proxy).
         - 'nearby': Only explore nearby logical classes (flip one bit at a time).
         - 'random': Randomly sample logical classes for exploration.
+        - 'most-likely-first': Select classes based on prior logical error distribution.
         Only used when compute_logical_gap_proxy is True. Defaults to None.
     num_classes_to_explore : int, optional
         Total number of logical classes to explore including the initial best class.
-        Required when `logical_gap_proxy_method` is 'random'. Only used when
-        compute_logical_gap_proxy is True. Defaults to None.
+        Required when `logical_gap_proxy_method` is 'random' or 'most-likely-first'.
+        Only used when compute_logical_gap_proxy is True. Defaults to None.
     compute_all_intermediate_gap_proxies : bool, optional
-        If True and `logical_gap_proxy_method` is 'random', compute additional gap
-        proxies `gap_proxy_{i}` for all i from 2 up to the explored number of logical
-        classes. Only used when compute_logical_gap_proxy is True. Defaults to False.
+        If True and `logical_gap_proxy_method` is 'random' or 'most-likely-first',
+        compute additional gap proxies `gap_proxy_{i}` for all i from 2 up to the
+        explored number of logical classes. Only used when compute_logical_gap_proxy
+        is True. Defaults to False.
+    logical_error_distribution : 1D numpy array of float, optional
+        Distribution over logical errors with shape (2^k,) where k is the number
+        of observables. Required when `logical_gap_proxy_method` is 'most-likely-first'.
+        Only used when compute_logical_gap_proxy is True. Defaults to None.
     include_cluster_stats : bool, optional
         Whether to include cluster statistics. Defaults to True.
 
@@ -221,6 +228,7 @@ def bplsd_simulation_task_single(
             logical_gap_proxy_method=logical_gap_proxy_method,
             num_classes_to_explore=num_classes_to_explore,
             compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
+            logical_error_distribution=logical_error_distribution,
             include_cluster_stats=include_cluster_stats,
         )
 
@@ -305,6 +313,7 @@ def bplsd_simulation_task_parallel(
     logical_gap_proxy_method: str | None = None,
     num_classes_to_explore: int | None = None,
     compute_all_intermediate_gap_proxies: bool = False,
+    logical_error_distribution: np.ndarray | None = None,
     include_cluster_stats: bool = True,
 ) -> Tuple[pd.DataFrame, sparse.csr_array | None, sparse.csr_array, sparse.csr_array]:
     """
@@ -329,15 +338,21 @@ def bplsd_simulation_task_parallel(
         - None: Explore all possible logical classes (exact gap proxy).
         - 'nearby': Only explore nearby logical classes (flip one bit at a time).
         - 'random': Randomly sample logical classes for exploration.
+        - 'most-likely-first': Select classes based on prior logical error distribution.
         Only used when compute_logical_gap_proxy is True. Defaults to None.
     num_classes_to_explore : int, optional
         Total number of logical classes to explore including the initial best class.
-        Required when `logical_gap_proxy_method` is 'random'. Only used when
-        compute_logical_gap_proxy is True. Defaults to None.
+        Required when `logical_gap_proxy_method` is 'random' or 'most-likely-first'.
+        Only used when compute_logical_gap_proxy is True. Defaults to None.
     compute_all_intermediate_gap_proxies : bool, optional
-        If True and `logical_gap_proxy_method` is 'random', compute additional gap
-        proxies `gap_proxy_{i}` for all i from 2 up to the explored number of logical
-        classes. Only used when compute_logical_gap_proxy is True. Defaults to False.
+        If True and `logical_gap_proxy_method` is 'random' or 'most-likely-first',
+        compute additional gap proxies `gap_proxy_{i}` for all i from 2 up to the
+        explored number of logical classes. Only used when compute_logical_gap_proxy
+        is True. Defaults to False.
+    logical_error_distribution : 1D numpy array of float, optional
+        Distribution over logical errors with shape (2^k,) where k is the number
+        of observables. Required when `logical_gap_proxy_method` is 'most-likely-first'.
+        Only used when compute_logical_gap_proxy is True. Defaults to None.
     include_cluster_stats : bool, optional
         Whether to include cluster statistics. Defaults to True.
 
@@ -372,6 +387,7 @@ def bplsd_simulation_task_parallel(
             logical_gap_proxy_method=logical_gap_proxy_method,
             num_classes_to_explore=num_classes_to_explore,
             compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
+            logical_error_distribution=logical_error_distribution,
             include_cluster_stats=include_cluster_stats,
         )
         for chunk in chunk_sizes

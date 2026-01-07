@@ -34,7 +34,9 @@ pytest tests/test_decoder.py::TestSoftOutputsBpLsdDecoder::test_decode_single_sa
 - **`bplsd_decoder.py`**: `SoftOutputsBpLsdDecoder` - Main decoder using BP+LSD (from `ldpc` package). Provides:
   - Standard decoding with cluster statistics (sizes, LLRs)
   - Sliding window decoding via `decode_sliding_window()` with caching for window structures and decoders
-  - Logical gap proxy computation for confidence estimation
+  - Logical gap proxy computation with methods: `None` (exhaustive), `'nearby'`, `'random'`, `'most-likely-first'`
+
+- **`logical_error_distribution.py`**: Utilities for collecting logical error distributions from simulations. Used with `'most-likely-first'` gap proxy method.
 
 - **`matching_decoder.py`**: `SoftOutputsMatchingDecoder` - PyMatching-based decoder computing logical gap for confidence. Explores all logical classes (2^k for k observables) to find the gap between best and second-best predictions.
 

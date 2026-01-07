@@ -308,6 +308,144 @@ class TestSoftOutputsBpLsdDecoder:
         )
         assert len(all_classes) == 3  # 2^2 - 1 = 3 (excluding predicted class)
 
+    def test_logical_gap_proxy_most_likely_first_method(self, circuit_data):
+        """Test logical gap proxy computation with 'most-likely-first' method."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Create a simple logical error distribution (uniform)
+        logical_error_distribution = np.ones(1 << num_observables)
+        # Make some errors more likely than others
+        logical_error_distribution[1] = 10.0  # Single-bit flip on first observable
+        if num_observables > 1:
+            logical_error_distribution[2] = 5.0  # Single-bit flip on second observable
+
+        pred, pred_bp, converge, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            logical_gap_proxy_method="most-likely-first",
+            num_classes_to_explore=3,
+            logical_error_distribution=logical_error_distribution,
+        )
+
+        assert "gap_proxy" in soft_outputs
+        assert isinstance(soft_outputs["gap_proxy"], float)
+        assert not np.isnan(soft_outputs["gap_proxy"])
+        assert soft_outputs["gap_proxy"] >= 0.0
+
+    def test_logical_gap_proxy_most_likely_first_with_intermediate(self, circuit_data):
+        """Test 'most-likely-first' method with intermediate gap proxies."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Create distribution with varying probabilities
+        logical_error_distribution = np.random.rand(1 << num_observables)
+
+        num_classes = min(4, (1 << num_observables))
+        _, _, _, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            logical_gap_proxy_method="most-likely-first",
+            num_classes_to_explore=num_classes,
+            logical_error_distribution=logical_error_distribution,
+            compute_all_intermediate_gap_proxies=True,
+        )
+
+        # Check intermediate gap proxies exist
+        for i in range(2, num_classes + 1):
+            key = f"gap_proxy_{i}"
+            assert key in soft_outputs, f"Missing {key}"
+            assert isinstance(soft_outputs[key], float)
+            assert soft_outputs[key] >= 0.0
+
+        # Final gap_proxy should match gap_proxy_{num_classes}
+        assert "gap_proxy" in soft_outputs
+        assert np.isclose(
+            soft_outputs["gap_proxy"], soft_outputs[f"gap_proxy_{num_classes}"]
+        )
+
+    def test_logical_gap_proxy_most_likely_first_invalid_params(self, circuit_data):
+        """Test 'most-likely-first' method with invalid parameters."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Test missing logical_error_distribution
+        with pytest.raises(
+            ValueError, match="logical_error_distribution must be provided"
+        ):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method="most-likely-first",
+                num_classes_to_explore=3,
+            )
+
+        # Test missing num_classes_to_explore
+        logical_error_distribution = np.ones(1 << num_observables)
+        with pytest.raises(ValueError, match="num_classes_to_explore must be provided"):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method="most-likely-first",
+                logical_error_distribution=logical_error_distribution,
+            )
+
+        # Test wrong distribution length
+        wrong_distribution = np.ones(3)  # Wrong length
+        with pytest.raises(ValueError, match="logical_error_distribution has length"):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method="most-likely-first",
+                num_classes_to_explore=3,
+                logical_error_distribution=wrong_distribution,
+            )
+
+    def test_index_to_logical_class_helper(self, circuit_data):
+        """Test the _index_to_logical_class helper method."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+
+        # Test index 0 -> all False
+        result = decoder._index_to_logical_class(0, 3)
+        assert np.array_equal(result, np.array([False, False, False]))
+
+        # Test index 1 -> [True, False, False]
+        result = decoder._index_to_logical_class(1, 3)
+        assert np.array_equal(result, np.array([True, False, False]))
+
+        # Test index 5 -> [True, False, True] (binary: 101)
+        result = decoder._index_to_logical_class(5, 3)
+        assert np.array_equal(result, np.array([True, False, True]))
+
+        # Test index 7 -> [True, True, True] (binary: 111)
+        result = decoder._index_to_logical_class(7, 3)
+        assert np.array_equal(result, np.array([True, True, True]))
+
+    def test_get_most_likely_logical_classes(self, circuit_data):
+        """Test the _get_most_likely_logical_classes helper method."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+
+        best_logical_class = np.array([False, False], dtype=bool)
+        # Distribution: index 3 (11) most likely, index 1 (01) second, index 2 (10) third
+        distribution = np.array([0.1, 0.3, 0.2, 0.4])  # 4 classes for 2 observables
+
+        # Get 2 additional classes (3 total including best)
+        classes = decoder._get_most_likely_logical_classes(
+            best_logical_class=best_logical_class,
+            logical_error_distribution=distribution,
+            num_classes_to_explore=3,
+        )
+
+        assert len(classes) == 2
+
+        # First class should be best_class XOR most_likely_error (index 3 = [True, True])
+        # [False, False] XOR [True, True] = [True, True]
+        assert np.array_equal(classes[0], np.array([True, True]))
+
+        # Second class should be best_class XOR second_most_likely_error (index 1 = [True, False])
+        # [False, False] XOR [True, False] = [True, False]
+        assert np.array_equal(classes[1], np.array([True, False]))
+
     def test_compute_cluster_stats_false(self, circuit_data):
         """Test that cluster stats are not computed when disabled."""
         decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])

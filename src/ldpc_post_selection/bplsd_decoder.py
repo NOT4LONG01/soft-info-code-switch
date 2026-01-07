@@ -335,6 +335,120 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
 
         return sampled_logical_classes
 
+    def _index_to_logical_class(
+        self,
+        index: int,
+        num_observables: int,
+    ) -> np.ndarray:
+        """
+        Convert an integer index to a logical class bit pattern.
+
+        The bit pattern is determined by i = sum(b_j * 2^j) for j=0..k-1,
+        where b_j is the j-th bit of the logical class.
+
+        Parameters
+        ----------
+        index : int
+            Integer index representing the logical class/error.
+        num_observables : int
+            Number of observables (k).
+
+        Returns
+        -------
+        logical_class : 1D numpy array of bool with shape (num_observables,)
+            Bit pattern where logical_class[j] = (index >> j) & 1.
+        """
+        if num_observables <= 64:
+            # Vectorized path for typical cases
+            bit_positions = np.arange(num_observables, dtype=np.uint64)
+            logical_class = ((np.uint64(index) >> bit_positions) & 1).astype(bool)
+        else:
+            # Fallback for >64 observables
+            logical_class = np.array(
+                [(index >> j) & 1 for j in range(num_observables)],
+                dtype=bool,
+            )
+        return logical_class
+
+    def _get_most_likely_logical_classes(
+        self,
+        best_logical_class: np.ndarray,
+        logical_error_distribution: np.ndarray,
+        num_classes_to_explore: int,
+        verbose: bool = False,
+    ) -> List[np.ndarray]:
+        """
+        Get logical classes to explore based on most likely logical errors.
+
+        Selects the most probable logical errors from the distribution
+        (excluding identity), applies XOR with best_logical_class to obtain
+        the corresponding logical classes.
+
+        Parameters
+        ----------
+        best_logical_class : 1D numpy array of bool
+            The best logical class from initial decoding.
+        logical_error_distribution : 1D numpy array of float
+            Distribution over logical errors with shape (2^k,).
+            Index i corresponds to logical error with bit pattern i = sum(b_j * 2^j).
+            Index 0 represents no error (identity). Higher values indicate more
+            probable logical errors.
+        num_classes_to_explore : int
+            Total number of logical classes to explore including the initial best class.
+        verbose : bool, optional
+            If True, print progress information. Defaults to False.
+
+        Returns
+        -------
+        logical_classes_to_explore : list of 1D numpy array of bool
+            List of logical classes to explore (excluding the initial best class).
+        """
+        num_observables = len(best_logical_class)
+        if num_observables == 0:
+            return []
+
+        total_num_logical_classes = 1 << num_observables
+        num_additional_classes = min(
+            num_classes_to_explore - 1, total_num_logical_classes - 1
+        )
+
+        if num_additional_classes <= 0:
+            return []
+
+        # Get indices of logical errors sorted by probability (descending)
+        # Exclude index 0 (identity/no error) since applying it gives the same class
+        error_indices_sorted = np.argsort(logical_error_distribution)[::-1]
+
+        # Filter out index 0 (identity) and take top num_additional_classes
+        non_identity_sorted = error_indices_sorted[error_indices_sorted != 0]
+        selected_error_indices = non_identity_sorted[:num_additional_classes]
+
+        if verbose:
+            print(
+                f"  Selecting {len(selected_error_indices)} most likely logical errors "
+                f"(requested_total={num_classes_to_explore})"
+            )
+            if len(selected_error_indices) > 0:
+                selected_probs = logical_error_distribution[selected_error_indices]
+                print(
+                    f"    Top error indices: {selected_error_indices[:5].tolist()}..."
+                )
+                print(f"    Corresponding values: {selected_probs[:5].tolist()}...")
+
+        # Convert error indices to logical classes by XOR with best_logical_class
+        logical_classes_to_explore = []
+
+        for error_idx in selected_error_indices:
+            # Convert error index to bit pattern
+            error_pattern = self._index_to_logical_class(
+                int(error_idx), num_observables
+            )
+            # Apply error to best class (XOR)
+            resulting_class = best_logical_class ^ error_pattern
+            logical_classes_to_explore.append(resulting_class)
+
+        return logical_classes_to_explore
+
     def _perform_fixed_logical_class_decoding(
         self,
         detector_outcomes: np.ndarray,
@@ -403,6 +517,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         logical_gap_proxy_method: str | None,
         num_classes_to_explore: int | None = None,
         compute_all_intermediate_gap_proxies: bool = False,
+        logical_error_distribution: np.ndarray | None = None,
         verbose: bool = False,
     ) -> Tuple[float, np.ndarray, float, Dict[int, float]]:
         """
@@ -421,13 +536,19 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             - None: Explore all possible logical classes (exact gap proxy).
             - 'nearby': Only explore nearby logical classes (flip one bit at a time).
             - 'random': Randomly sample logical classes for exploration.
+            - 'most-likely-first': Select classes based on prior logical error distribution.
         num_classes_to_explore : int, optional
             Total number of logical classes to explore including the initial best class.
-            Required when `logical_gap_proxy_method` is 'random'.
+            Required when `logical_gap_proxy_method` is 'random' or 'most-likely-first'.
         compute_all_intermediate_gap_proxies : bool, optional
-            If True and `logical_gap_proxy_method` is 'random', compute and store
-            gap proxies for all intermediate numbers of explored logical classes.
-            Defaults to False.
+            If True and `logical_gap_proxy_method` is 'random' or 'most-likely-first',
+            compute and store gap proxies for all intermediate numbers of explored
+            logical classes. Defaults to False.
+        logical_error_distribution : 1D numpy array of float, optional
+            Distribution over logical errors with shape (2^k,) where k is the number
+            of observables. Index i corresponds to logical error with bit pattern
+            i = sum(b_j * 2^j) for j=0..k-1. Higher values indicate more probable
+            errors. Required when `logical_gap_proxy_method` is 'most-likely-first'.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
 
@@ -442,7 +563,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         gap_proxies_by_num_classes : dict of int to float
             Dictionary mapping the number of explored logical classes to the
             corresponding gap proxy. Only populated when `compute_all_intermediate_gap_proxies`
-            is True and `logical_gap_proxy_method` is 'random'.
+            is True and `logical_gap_proxy_method` is 'random' or 'most-likely-first'.
         """
         if verbose:
             print("  Computing logical gap proxy...")
@@ -456,10 +577,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         if logical_gap_proxy_method is not None and logical_gap_proxy_method not in (
             "nearby",
             "random",
+            "most-likely-first",
         ):
             raise ValueError(
                 f"Invalid logical_gap_proxy_method: {logical_gap_proxy_method}. "
-                "Must be None, 'nearby', or 'random'."
+                "Must be None, 'nearby', 'random', or 'most-likely-first'."
             )
 
         # Validate num_classes_to_explore for 'random' method
@@ -471,6 +593,28 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 )
             if num_classes_to_explore < 1:
                 raise ValueError("num_classes_to_explore must be >= 1")
+
+        # Validate parameters for 'most-likely-first' method
+        if logical_gap_proxy_method == "most-likely-first":
+            if logical_error_distribution is None:
+                raise ValueError(
+                    "logical_error_distribution must be provided when "
+                    "logical_gap_proxy_method is 'most-likely-first'."
+                )
+            if num_classes_to_explore is None:
+                raise ValueError(
+                    "num_classes_to_explore must be provided when "
+                    "logical_gap_proxy_method is 'most-likely-first'."
+                )
+            if num_classes_to_explore < 1:
+                raise ValueError("num_classes_to_explore must be >= 1")
+            num_observables = self.obs_matrix.shape[0]
+            expected_dist_len = 1 << num_observables
+            if len(logical_error_distribution) != expected_dist_len:
+                raise ValueError(
+                    f"logical_error_distribution has length {len(logical_error_distribution)}, "
+                    f"but expected {expected_dist_len} for {num_observables} observables."
+                )
 
         # Calculate original logical class
         original_logical_class = (
@@ -499,6 +643,58 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             explored_count = 1
 
             for logical_class in random_logical_classes:
+                pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
+                    detector_outcomes, logical_class, verbose=verbose
+                )
+                logical_class_tuple = tuple(logical_class)
+                explored_classes[logical_class_tuple] = (pred_llr, pred_pattern)
+
+                explored_count += 1
+                pred_llr = float(pred_llr)
+                if pred_llr <= best_pred_llr:
+                    second_best_pred_llr = best_pred_llr
+                    best_pred_llr = pred_llr
+                    best_pred = pred_pattern
+                    best_logical_class_tuple = logical_class_tuple
+                elif pred_llr < second_best_pred_llr:
+                    second_best_pred_llr = pred_llr
+
+                if compute_all_intermediate_gap_proxies and explored_count >= 2:
+                    gap_proxies_by_num_classes[explored_count] = float(
+                        second_best_pred_llr - best_pred_llr
+                    )
+
+            if second_best_pred_llr == float("inf"):
+                second_best_pred_llr = best_pred_llr
+
+            gap_proxy = float(second_best_pred_llr - best_pred_llr)
+
+            if verbose:
+                print(f"  Total logical classes explored: {len(explored_classes)}")
+                print(f"  Best pred_llr: {best_pred_llr:.4f}")
+                print(f"  Second best pred_llr: {second_best_pred_llr:.4f}")
+                print(f"  Gap proxy: {gap_proxy:.4f}")
+                print(f"  Best logical class: {np.array(best_logical_class_tuple)}")
+
+            return gap_proxy, best_pred, best_pred_llr, gap_proxies_by_num_classes
+
+        elif logical_gap_proxy_method == "most-likely-first":
+            # Get logical classes to explore based on most likely logical errors
+            most_likely_logical_classes = self._get_most_likely_logical_classes(
+                best_logical_class=original_logical_class,
+                logical_error_distribution=logical_error_distribution,
+                num_classes_to_explore=num_classes_to_explore,
+                verbose=verbose,
+            )
+
+            gap_proxies_by_num_classes: Dict[int, float] = {}
+            best_pred_llr = float(original_pred_llr)
+            best_pred = pred
+            best_logical_class_tuple = tuple(original_logical_class)
+            second_best_pred_llr = float("inf")
+            explored_count = 1
+
+            for logical_class in most_likely_logical_classes:
                 pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
                     detector_outcomes, logical_class, verbose=verbose
                 )
@@ -791,6 +987,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         logical_gap_proxy_method: str | None = None,
         num_classes_to_explore: int | None = None,
         compute_all_intermediate_gap_proxies: bool = False,
+        logical_error_distribution: np.ndarray | None = None,
         verbose: bool = False,
         _benchmarking: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray, bool, Dict[str, Any]]:
@@ -812,16 +1009,23 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             - None: Explore all possible logical classes (exact gap proxy).
             - 'nearby': Only explore nearby logical classes (flip one bit at a time).
             - 'random': Randomly sample logical classes for exploration.
+            - 'most-likely-first': Select classes based on prior logical error distribution.
             Only used when compute_logical_gap_proxy is True. Defaults to None.
         num_classes_to_explore : int, optional
             Total number of logical classes to explore including the initial best class.
-            Required when `logical_gap_proxy_method` is 'random'. Only used when
-            compute_logical_gap_proxy is True. Defaults to None.
+            Required when `logical_gap_proxy_method` is 'random' or 'most-likely-first'.
+            Only used when compute_logical_gap_proxy is True. Defaults to None.
         compute_all_intermediate_gap_proxies : bool, optional
-            If True and `logical_gap_proxy_method` is 'random', compute additional
-            gap proxies `gap_proxy_{i}` for all i from 2 up to the explored number
-            of logical classes. Only used when compute_logical_gap_proxy is True.
-            Defaults to False.
+            If True and `logical_gap_proxy_method` is 'random' or 'most-likely-first',
+            compute additional gap proxies `gap_proxy_{i}` for all i from 2 up to the
+            explored number of logical classes. Only used when compute_logical_gap_proxy
+            is True. Defaults to False.
+        logical_error_distribution : 1D numpy array of float, optional
+            Distribution over logical errors with shape (2^k,) where k is the number
+            of observables. Index i corresponds to logical error with bit pattern
+            i = sum(b_j * 2^j) for j=0..k-1. Higher values indicate more probable
+            errors. Required when `logical_gap_proxy_method` is 'most-likely-first'.
+            Only used when compute_logical_gap_proxy is True. Defaults to None.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
         _benchmarking : bool
@@ -847,7 +1051,8 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             region (cluster_llrs[-1])
             - gap_proxy (float): Logical gap proxy (only if compute_logical_gap_proxy=True)
             - gap_proxy_{i} (float): Logical gap proxy after exploring i logical classes
-              (only if compute_all_intermediate_gap_proxies=True and logical_gap_proxy_method='random')
+              (only if compute_all_intermediate_gap_proxies=True and logical_gap_proxy_method
+              is 'random' or 'most-likely-first')
             - cluster_size_norm_frac_{order} (float): Norm fraction of cluster sizes for each order
             - cluster_llr_norm_frac_{order} (float): Norm fraction of cluster LLRs for each order
         """
@@ -998,6 +1203,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 logical_gap_proxy_method=logical_gap_proxy_method,
                 num_classes_to_explore=num_classes_to_explore,
                 compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
+                logical_error_distribution=logical_error_distribution,
                 verbose=verbose,
             )
 
