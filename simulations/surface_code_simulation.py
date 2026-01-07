@@ -30,7 +30,9 @@ def simulate(
     decoder_prms: Dict[str, Any] | None = None,
     noise_model: str = "circuit-level",
     compute_logical_gap_proxy: bool = False,
-    compute_all_random_gap_proxies: bool = False,
+    logical_gap_proxy_method: str | None = None,
+    num_classes_to_explore: int | None = None,
+    compute_all_intermediate_gap_proxies: bool = False,
     include_cluster_stats: bool = True,
 ) -> None:
     """
@@ -62,8 +64,19 @@ def simulate(
     compute_logical_gap_proxy : bool, default=False
         Whether to compute logical gap proxy. When True, cluster stats are
         automatically disabled (mutually exclusive).
-    compute_all_random_gap_proxies : bool, default=False
-        If True and explore_random_logical_classes is given, compute additional gap
+    logical_gap_proxy_method : str or None, optional
+        Method for exploring logical classes when computing gap proxy:
+        - None: Explore all possible logical classes (exact gap proxy).
+        - 'nearby': Only explore nearby logical classes (flip one bit at a time).
+        - 'random': Randomly sample logical classes for exploration.
+        Only used when compute_logical_gap_proxy is True. Defaults to None.
+        For surface codes with one observable, this is typically left as None.
+    num_classes_to_explore : int, optional
+        Total number of logical classes to explore including the initial best class.
+        Required when `logical_gap_proxy_method` is 'random'. Only used when
+        compute_logical_gap_proxy is True. Defaults to None.
+    compute_all_intermediate_gap_proxies : bool, default=False
+        If True and `logical_gap_proxy_method` is 'random', compute additional gap
         proxies `gap_proxy_{i}` for all i from 2 up to the explored number of logical
         classes. Only used when compute_logical_gap_proxy is True.
     include_cluster_stats : bool, default=True
@@ -133,7 +146,9 @@ def simulate(
             repeat=repeat,
             decoder_prms=decoder_prms,
             compute_logical_gap_proxy=compute_logical_gap_proxy,
-            compute_all_random_gap_proxies=compute_all_random_gap_proxies,
+            logical_gap_proxy_method=logical_gap_proxy_method,
+            num_classes_to_explore=num_classes_to_explore,
+            compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
             include_cluster_stats=include_cluster_stats,
         )
 

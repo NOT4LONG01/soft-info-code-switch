@@ -141,11 +141,11 @@ class TestSoftOutputsBpLsdDecoder:
         """Test logical gap proxy computation functionality."""
         decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
 
-        # Test with gap proxy computation enabled
+        # Test with gap proxy computation enabled using 'nearby' method
         pred, pred_bp, converge, soft_outputs = decoder.decode(
             circuit_data["syndrome"],
             compute_logical_gap_proxy=True,
-            explore_only_nearby_logical_classes=True,
+            logical_gap_proxy_method="nearby",
         )
 
         # Check that gap_proxy is included in soft outputs
@@ -153,11 +153,11 @@ class TestSoftOutputsBpLsdDecoder:
         assert isinstance(soft_outputs["gap_proxy"], float)
         assert not np.isnan(soft_outputs["gap_proxy"])
 
-        # Test with explore_only_nearby_logical_classes=False
+        # Test with logical_gap_proxy_method=None (explore all classes)
         pred2, pred_bp2, converge2, soft_outputs2 = decoder.decode(
             circuit_data["syndrome"],
             compute_logical_gap_proxy=True,
-            explore_only_nearby_logical_classes=False,
+            logical_gap_proxy_method=None,
         )
 
         assert "gap_proxy" in soft_outputs2
@@ -171,7 +171,8 @@ class TestSoftOutputsBpLsdDecoder:
         pred, pred_bp, converge, soft_outputs = decoder.decode(
             circuit_data["syndrome"],
             compute_logical_gap_proxy=True,
-            explore_random_logical_classes=1,
+            logical_gap_proxy_method="random",
+            num_classes_to_explore=1,
         )
 
         assert "gap_proxy" in soft_outputs
@@ -181,7 +182,8 @@ class TestSoftOutputsBpLsdDecoder:
         pred2, pred_bp2, converge2, soft_outputs2 = decoder.decode(
             circuit_data["syndrome"],
             compute_logical_gap_proxy=True,
-            explore_random_logical_classes=4,
+            logical_gap_proxy_method="random",
+            num_classes_to_explore=4,
         )
 
         assert "gap_proxy" in soft_outputs2
@@ -189,7 +191,9 @@ class TestSoftOutputsBpLsdDecoder:
         assert not np.isnan(soft_outputs2["gap_proxy"])
         assert soft_outputs2["gap_proxy"] >= 0.0
 
-    def test_logical_gap_proxy_random_logical_classes_all_gap_proxies(self, circuit_data):
+    def test_logical_gap_proxy_random_logical_classes_all_gap_proxies(
+        self, circuit_data
+    ):
         decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
         current_num_bits = decoder.H.shape[1]
 
@@ -212,8 +216,9 @@ class TestSoftOutputsBpLsdDecoder:
         _, _, _, soft_outputs = decoder.decode(
             circuit_data["syndrome"],
             compute_logical_gap_proxy=True,
-            explore_random_logical_classes=4,
-            compute_all_random_gap_proxies=True,
+            logical_gap_proxy_method="random",
+            num_classes_to_explore=4,
+            compute_all_intermediate_gap_proxies=True,
         )
 
         for i in [2, 3, 4]:
@@ -229,19 +234,29 @@ class TestSoftOutputsBpLsdDecoder:
     def test_logical_gap_proxy_random_classes_invalid_params(self, circuit_data):
         decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
 
-        with pytest.raises(ValueError, match="explore_random_logical_classes"):
+        # Test that num_classes_to_explore < 1 raises error
+        with pytest.raises(ValueError, match="num_classes_to_explore must be >= 1"):
             decoder.decode(
                 circuit_data["syndrome"],
                 compute_logical_gap_proxy=True,
-                explore_random_logical_classes=0,
+                logical_gap_proxy_method="random",
+                num_classes_to_explore=0,
             )
 
-        with pytest.raises(ValueError, match="cannot be used together"):
+        # Test that 'random' method without num_classes_to_explore raises error
+        with pytest.raises(ValueError, match="num_classes_to_explore must be provided"):
             decoder.decode(
                 circuit_data["syndrome"],
                 compute_logical_gap_proxy=True,
-                explore_only_nearby_logical_classes=True,
-                explore_random_logical_classes=2,
+                logical_gap_proxy_method="random",
+            )
+
+        # Test that invalid method raises error
+        with pytest.raises(ValueError, match="Invalid logical_gap_proxy_method"):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method="invalid_method",
             )
 
     def test_logical_gap_proxy_disabled(self, circuit_data):
@@ -279,13 +294,13 @@ class TestSoftOutputsBpLsdDecoder:
         # Test _get_logical_classes_to_explore
         predicted_logical_class = np.array([True, False], dtype=bool)
 
-        # Test nearby classes only
-        nearby_classes = decoder._get_logical_classes_to_explore(
+        # Test adjacent classes only
+        adjacent_classes = decoder._get_logical_classes_to_explore(
             predicted_logical_class, explore_only_nearby_logical_classes=True
         )
         assert (
-            len(nearby_classes) == 2
-        )  # Should have 2 nearby classes for 2 observables
+            len(adjacent_classes) == 2
+        )  # Should have 2 adjacent classes for 2 observables
 
         # Test all classes
         all_classes = decoder._get_logical_classes_to_explore(

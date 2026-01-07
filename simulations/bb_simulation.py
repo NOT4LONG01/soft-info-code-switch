@@ -30,9 +30,9 @@ def simulate(
     shots_per_batch: int = 1_000_000,
     decoder_prms: Dict[str, Any] | None = None,
     compute_logical_gap_proxy: bool = False,
-    explore_only_nearby_logical_classes: bool = False,
-    explore_random_logical_classes: int | None = None,
-    compute_all_random_gap_proxies: bool = False,
+    logical_gap_proxy_method: str | None = None,
+    num_classes_to_explore: int | None = None,
+    compute_all_intermediate_gap_proxies: bool = False,
     include_cluster_stats: bool = True,
 ) -> None:
     """
@@ -61,14 +61,18 @@ def simulate(
         Parameters for the SoftOutputsBpLsdDecoder.
     compute_logical_gap_proxy : bool, optional
         Whether to compute logical gap proxy. Defaults to False.
-    explore_only_nearby_logical_classes : bool, optional
-        Whether to explore only adjacent logical classes for gap proxy computation.
-        Only used when compute_logical_gap_proxy is True. Defaults to False.
-    explore_random_logical_classes : int, optional
-        If given, explore a random subset of logical classes for gap proxy computation.
+    logical_gap_proxy_method : str or None, optional
+        Method for exploring logical classes when computing gap proxy:
+        - None: Explore all possible logical classes (exact gap proxy).
+        - 'nearby': Only explore nearby logical classes (flip one bit at a time).
+        - 'random': Randomly sample logical classes for exploration.
         Only used when compute_logical_gap_proxy is True. Defaults to None.
-    compute_all_random_gap_proxies : bool, optional
-        If True and explore_random_logical_classes is given, compute additional gap
+    num_classes_to_explore : int, optional
+        Total number of logical classes to explore including the initial best class.
+        Required when `logical_gap_proxy_method` is 'random'. Only used when
+        compute_logical_gap_proxy is True. Defaults to None.
+    compute_all_intermediate_gap_proxies : bool, optional
+        If True and `logical_gap_proxy_method` is 'random', compute additional gap
         proxies `gap_proxy_{i}` for all i from 2 up to the explored number of logical
         classes. Only used when compute_logical_gap_proxy is True. Defaults to False.
     include_cluster_stats : bool, optional
@@ -136,9 +140,9 @@ def simulate(
             repeat=repeat,
             decoder_prms=decoder_prms,
             compute_logical_gap_proxy=compute_logical_gap_proxy,
-            explore_only_nearby_logical_classes=explore_only_nearby_logical_classes,
-            explore_random_logical_classes=explore_random_logical_classes,
-            compute_all_random_gap_proxies=compute_all_random_gap_proxies,
+            logical_gap_proxy_method=logical_gap_proxy_method,
+            num_classes_to_explore=num_classes_to_explore,
+            compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
             include_cluster_stats=include_cluster_stats,
         )
 
@@ -189,18 +193,22 @@ if __name__ == "__main__":
     total_shots = round(1e6)
     compute_logical_gap_proxy = True
     include_cluster_stats = False
-    explore_only_nearby_logical_classes = True
-    explore_random_logical_classes = None
-    compute_all_random_gap_proxies = True
+    logical_gap_proxy_method = "random"  # None, 'nearby', or 'random'
+    num_classes_to_explore = 24  # Required when method is 'random'
+    compute_all_intermediate_gap_proxies = True
 
-    n_jobs = 62
+    n_jobs = 126
     repeat = 1
     if compute_logical_gap_proxy:
-        if explore_only_nearby_logical_classes:
-            dir_name = f"bb_minsum_iter30_lsd0_raw_gap_proxy_nearby"
+        if logical_gap_proxy_method == "nearby":
+            dir_name = "bb_minsum_iter30_lsd0_raw_gap_proxy_nearby"
+        elif logical_gap_proxy_method == "random":
+            assert num_classes_to_explore is not None
+            dir_name = (
+                f"bb_minsum_iter30_lsd0_raw_gap_proxy_random_{num_classes_to_explore}"
+            )
         else:
-            assert explore_random_logical_classes is not None
-            dir_name = f"bb_minsum_iter30_lsd0_raw_gap_proxy_random_{explore_random_logical_classes}"
+            dir_name = "bb_minsum_iter30_lsd0_raw_gap_proxy"
     else:
         dir_name = "bb_minsum_iter30_lsd0_raw"
 
@@ -227,8 +235,8 @@ if __name__ == "__main__":
     print("plist =", plist)
     print("decoder_prms =", decoder_prms)
     print("compute_logical_gap_proxy =", compute_logical_gap_proxy)
-    print("explore_only_nearby_logical_classes =", explore_only_nearby_logical_classes)
-    print("explore_random_logical_classes =", explore_random_logical_classes)
+    print("logical_gap_proxy_method =", logical_gap_proxy_method)
+    print("num_classes_to_explore =", num_classes_to_explore)
 
     print(f"\n==== Starting simulations up to {total_shots} shots ====")
     for n in nlist:
@@ -246,9 +254,9 @@ if __name__ == "__main__":
                 decoder_prms=decoder_prms,
                 compute_logical_gap_proxy=compute_logical_gap_proxy,
                 include_cluster_stats=include_cluster_stats,
-                explore_only_nearby_logical_classes=explore_only_nearby_logical_classes,
-                explore_random_logical_classes=explore_random_logical_classes,
-                compute_all_random_gap_proxies=compute_all_random_gap_proxies,
+                logical_gap_proxy_method=logical_gap_proxy_method,
+                num_classes_to_explore=num_classes_to_explore,
+                compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
             )
 
     t0 = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

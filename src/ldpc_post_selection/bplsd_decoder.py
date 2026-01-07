@@ -400,9 +400,9 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         detector_outcomes: np.ndarray,
         pred: np.ndarray,
         original_pred_llr: float,
-        explore_only_nearby_logical_classes: bool,
-        explore_random_logical_classes: Optional[int] = None,
-        compute_all_random_gap_proxies: bool = False,
+        logical_gap_proxy_method: str | None,
+        num_classes_to_explore: int | None = None,
+        compute_all_intermediate_gap_proxies: bool = False,
         verbose: bool = False,
     ) -> Tuple[float, np.ndarray, float, Dict[int, float]]:
         """
@@ -416,15 +416,16 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             Original predicted error pattern.
         original_pred_llr : float
             Original prediction LLR.
-        explore_only_nearby_logical_classes : bool
-            Whether to explore only nearby logical classes.
-        explore_random_logical_classes : int, optional
-            If given, randomly sample `explore_random_logical_classes - 1` additional
-            logical classes (excluding the initial best class) and compute the gap
-            proxy using only the explored classes. Cannot be used together with
-            explore_only_nearby_logical_classes.
-        compute_all_random_gap_proxies : bool, optional
-            If True and explore_random_logical_classes is given, compute and store
+        logical_gap_proxy_method : str or None
+            Method for exploring logical classes:
+            - None: Explore all possible logical classes (exact gap proxy).
+            - 'nearby': Only explore nearby logical classes (flip one bit at a time).
+            - 'random': Randomly sample logical classes for exploration.
+        num_classes_to_explore : int, optional
+            Total number of logical classes to explore including the initial best class.
+            Required when `logical_gap_proxy_method` is 'random'.
+        compute_all_intermediate_gap_proxies : bool, optional
+            If True and `logical_gap_proxy_method` is 'random', compute and store
             gap proxies for all intermediate numbers of explored logical classes.
             Defaults to False.
         verbose : bool, optional
@@ -440,9 +441,8 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             Best prediction LLR (minimum among all explored).
         gap_proxies_by_num_classes : dict of int to float
             Dictionary mapping the number of explored logical classes to the
-            corresponding gap proxy. Only populated when
-            compute_all_random_gap_proxies is True and
-            explore_random_logical_classes is given.
+            corresponding gap proxy. Only populated when `compute_all_intermediate_gap_proxies`
+            is True and `logical_gap_proxy_method` is 'random'.
         """
         if verbose:
             print("  Computing logical gap proxy...")
@@ -451,6 +451,26 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             if verbose:
                 print("  No observables, returning original results")
             return 0.0, pred, original_pred_llr, {}
+
+        # Validate logical_gap_proxy_method
+        if logical_gap_proxy_method is not None and logical_gap_proxy_method not in (
+            "nearby",
+            "random",
+        ):
+            raise ValueError(
+                f"Invalid logical_gap_proxy_method: {logical_gap_proxy_method}. "
+                "Must be None, 'nearby', or 'random'."
+            )
+
+        # Validate num_classes_to_explore for 'random' method
+        if logical_gap_proxy_method == "random":
+            if num_classes_to_explore is None:
+                raise ValueError(
+                    "num_classes_to_explore must be provided when "
+                    "logical_gap_proxy_method is 'random'."
+                )
+            if num_classes_to_explore < 1:
+                raise ValueError("num_classes_to_explore must be >= 1")
 
         # Calculate original logical class
         original_logical_class = (
@@ -464,16 +484,10 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         explored_classes = {}  # logical_class tuple -> (pred_llr, pred_pattern)
         explored_classes[tuple(original_logical_class)] = (original_pred_llr, pred)
 
-        if explore_random_logical_classes is not None:
-            if explore_only_nearby_logical_classes:
-                raise ValueError(
-                    "explore_random_logical_classes cannot be used together with "
-                    "explore_only_nearby_logical_classes"
-                )
-
+        if logical_gap_proxy_method == "random":
             random_logical_classes = self._sample_random_logical_classes(
                 excluded_logical_class=original_logical_class,
-                num_total_logical_classes=explore_random_logical_classes,
+                num_total_logical_classes=num_classes_to_explore,
                 verbose=verbose,
             )
 
@@ -501,7 +515,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 elif pred_llr < second_best_pred_llr:
                     second_best_pred_llr = pred_llr
 
-                if compute_all_random_gap_proxies and explored_count >= 2:
+                if compute_all_intermediate_gap_proxies and explored_count >= 2:
                     gap_proxies_by_num_classes[explored_count] = float(
                         second_best_pred_llr - best_pred_llr
                     )
@@ -520,7 +534,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
 
             return gap_proxy, best_pred, best_pred_llr, gap_proxies_by_num_classes
 
-        elif not explore_only_nearby_logical_classes:
+        elif logical_gap_proxy_method is None:
             # Explore all classes (except the initial one)
             num_observables = len(original_logical_class)
             all_logical_classes = product([False, True], repeat=num_observables)
@@ -540,7 +554,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 explored_classes[logical_class_tuple] = (pred_llr, pred_pattern)
 
         else:
-            # Iterative exploration for nearby classes only
+            # 'nearby' method: Iterative exploration for nearby classes only
             to_explore = [original_logical_class]
             explored_set = {tuple(original_logical_class)}
 
@@ -554,9 +568,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
 
                 current_class = to_explore.pop(0)
 
-                # Get nearby logical classes
+                # Get nearby logical classes (explore_only_nearby=True)
                 nearby_classes = self._get_logical_classes_to_explore(
-                    current_class, True, verbose=False
+                    current_class,
+                    explore_only_nearby_logical_classes=True,
+                    verbose=False,
                 )
 
                 new_best_found = False
@@ -772,9 +788,9 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         detector_outcomes: np.ndarray | List[bool | int],
         include_cluster_stats: bool = True,
         compute_logical_gap_proxy: bool = False,
-        explore_only_nearby_logical_classes: bool = False,
-        explore_random_logical_classes: Optional[int] = None,
-        compute_all_random_gap_proxies: bool = False,
+        logical_gap_proxy_method: str | None = None,
+        num_classes_to_explore: int | None = None,
+        compute_all_intermediate_gap_proxies: bool = False,
         verbose: bool = False,
         _benchmarking: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray, bool, Dict[str, Any]]:
@@ -791,19 +807,18 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             Automatically set to False when compute_logical_gap_proxy is True.
         compute_logical_gap_proxy : bool
             Whether to compute logical gap proxy. Defaults to False.
-        explore_only_nearby_logical_classes : bool
-            If True, only explore adjacent logical classes for gap proxy computation.
-            If False, explore all possible logical classes. Only used when
-            compute_logical_gap_proxy is True. Defaults to False.
-        explore_random_logical_classes : int, optional
-            If given, explore a random subset of logical classes for gap proxy
-            computation. Specifically, it explores the initial best class and
-            `explore_random_logical_classes - 1` additional logical classes sampled
-            uniformly at random from all other logical classes. Only used when
-            compute_logical_gap_proxy is True. Cannot be used together with
-            explore_only_nearby_logical_classes. Defaults to None.
-        compute_all_random_gap_proxies : bool, optional
-            If True and explore_random_logical_classes is given, compute additional
+        logical_gap_proxy_method : str or None, optional
+            Method for exploring logical classes when computing gap proxy:
+            - None: Explore all possible logical classes (exact gap proxy).
+            - 'nearby': Only explore nearby logical classes (flip one bit at a time).
+            - 'random': Randomly sample logical classes for exploration.
+            Only used when compute_logical_gap_proxy is True. Defaults to None.
+        num_classes_to_explore : int, optional
+            Total number of logical classes to explore including the initial best class.
+            Required when `logical_gap_proxy_method` is 'random'. Only used when
+            compute_logical_gap_proxy is True. Defaults to None.
+        compute_all_intermediate_gap_proxies : bool, optional
+            If True and `logical_gap_proxy_method` is 'random', compute additional
             gap proxies `gap_proxy_{i}` for all i from 2 up to the explored number
             of logical classes. Only used when compute_logical_gap_proxy is True.
             Defaults to False.
@@ -832,7 +847,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             region (cluster_llrs[-1])
             - gap_proxy (float): Logical gap proxy (only if compute_logical_gap_proxy=True)
             - gap_proxy_{i} (float): Logical gap proxy after exploring i logical classes
-              (only if compute_all_random_gap_proxies=True and explore_random_logical_classes is not None)
+              (only if compute_all_intermediate_gap_proxies=True and logical_gap_proxy_method='random')
             - cluster_size_norm_frac_{order} (float): Norm fraction of cluster sizes for each order
             - cluster_llr_norm_frac_{order} (float): Norm fraction of cluster LLRs for each order
         """
@@ -980,9 +995,9 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 detector_outcomes,
                 pred,
                 soft_outputs["pred_llr"],
-                explore_only_nearby_logical_classes,
-                explore_random_logical_classes=explore_random_logical_classes,
-                compute_all_random_gap_proxies=compute_all_random_gap_proxies,
+                logical_gap_proxy_method=logical_gap_proxy_method,
+                num_classes_to_explore=num_classes_to_explore,
+                compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
                 verbose=verbose,
             )
 
@@ -993,7 +1008,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 gap_start = time.time()
 
             soft_outputs["gap_proxy"] = gap_proxy
-            if compute_all_random_gap_proxies and gap_proxies_by_num_classes:
+            if compute_all_intermediate_gap_proxies and gap_proxies_by_num_classes:
                 for num_classes, gap in sorted(gap_proxies_by_num_classes.items()):
                     soft_outputs[f"gap_proxy_{num_classes}"] = gap
 
