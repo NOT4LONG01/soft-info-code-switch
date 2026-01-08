@@ -551,12 +551,14 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         current_best_class: np.ndarray,
         sorted_error_indices: np.ndarray,
         explored_classes_set: set,
-    ) -> np.ndarray | None:
+        start_index: int = 0,
+    ) -> tuple[np.ndarray | None, int]:
         """
         Get the next unexplored logical class for most-likely-first-adaptive.
 
-        Iterates through errors sorted by probability (descending).
-        Returns the first class (current_best XOR error) not already explored.
+        Iterates through errors sorted by probability (descending), starting from
+        start_index. Returns the first class (current_best XOR error) not already
+        explored, along with the next start index for subsequent calls.
 
         Parameters
         ----------
@@ -566,14 +568,22 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             Error indices sorted by probability in descending order.
         explored_classes_set : set of tuple
             Set of already explored logical classes as tuples.
+        start_index : int, optional
+            Index in sorted_error_indices to start searching from. Defaults to 0.
+            Should be reset to 0 when current_best_class changes.
 
         Returns
         -------
         next_class : 1D numpy array of bool or None
             The next unexplored logical class, or None if all classes have been explored.
+        next_start_index : int
+            The index to use as start_index for the next call (if best class unchanged).
         """
         num_observables = len(current_best_class)
-        for error_idx in sorted_error_indices:
+        n_indices = len(sorted_error_indices)
+
+        for i in range(start_index, n_indices):
+            error_idx = sorted_error_indices[i]
             if error_idx == 0:
                 continue  # Skip identity
             error_pattern = self._index_to_logical_class(
@@ -581,8 +591,9 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             )
             candidate_class = current_best_class ^ error_pattern
             if tuple(candidate_class) not in explored_classes_set:
-                return candidate_class
-        return None
+                return candidate_class, i + 1
+
+        return None, n_indices
 
     def _sample_next_wr_adaptive_class(
         self,
@@ -963,6 +974,9 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             current_best_class = original_logical_class.copy()
             current_best_llr = float(original_pred_llr)
 
+            # Cursor for efficient scanning (reset to 0 when best class changes)
+            search_cursor = 0
+
             # Initialize intermediate tracking
             if compute_all_intermediate_gap_proxies:
                 running_best_llr = float(original_pred_llr)
@@ -977,8 +991,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
 
             # Explore until we have num_classes_to_explore classes
             while len(explored_classes_set) < num_classes_to_explore:
-                next_class = self._get_next_mlf_adaptive_class(
-                    current_best_class, sorted_error_indices, explored_classes_set
+                next_class, search_cursor = self._get_next_mlf_adaptive_class(
+                    current_best_class,
+                    sorted_error_indices,
+                    explored_classes_set,
+                    start_index=search_cursor,
                 )
                 if next_class is None:
                     if verbose:
@@ -1005,6 +1022,8 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                         )
                     current_best_class = next_class.copy()
                     current_best_llr = pred_llr_float
+                    # Reset cursor when best class changes (new base = new candidates)
+                    search_cursor = 0
 
                 # Track intermediate gap proxies if requested
                 if compute_all_intermediate_gap_proxies:

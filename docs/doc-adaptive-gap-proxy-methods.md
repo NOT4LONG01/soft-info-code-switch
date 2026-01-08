@@ -11,11 +11,11 @@ The logical gap proxy is a confidence metric for quantum error correction decodi
 Previously, several approximation methods existed:
 - **`None` (exhaustive)**: Explores all logical classes
 - **`'nearby'`**: Iteratively explores adjacent classes via Hamming distance
-- **`'random'`**: Uniformly samples N random classes
-- **`'most-likely-first'`**: Deterministically selects the N most probable classes based on a prior distribution
-- **`'weighted-random'`**: Samples classes with probabilities proportional to the distribution
+- **`'random'`**: Uniformly samples N random classes (base-independent, simply excludes the initial class)
+- **`'most-likely-first'`**: Deterministically selects the N most probable classes based on a prior distribution, using XOR with the initial best class as offset
+- **`'weighted-random'`**: Samples classes with probabilities proportional to the distribution, using XOR with the initial best class as offset
 
-The non-adaptive methods (`'most-likely-first'`, `'weighted-random'`, `'random'`) all select which logical classes to explore based solely on the **initial** best logical class. They pre-compute all classes to explore upfront, then iterate through them.
+The distribution-based methods (`'most-likely-first'`, `'weighted-random'`) select logical classes by XORing probable error patterns with the initial best class. In contrast, `'random'` is base-independent—it samples uniformly from all classes except the initial one. All non-adaptive methods pre-compute classes to explore upfront, then iterate through them.
 
 The key insight motivating adaptive methods: when exploring a new logical class that turns out to be better than the current best, subsequent exploration should "recenter" around this new best class. This is because logical errors are typically correlated with the current decoding state—if we've found a better class, errors relative to **that** class are more informative than errors relative to the original class.
 
