@@ -546,6 +546,89 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
 
         return logical_classes_to_explore
 
+    def _get_next_mlf_adaptive_class(
+        self,
+        current_best_class: np.ndarray,
+        sorted_error_indices: np.ndarray,
+        explored_classes_set: set,
+    ) -> np.ndarray | None:
+        """
+        Get the next unexplored logical class for most-likely-first-adaptive.
+
+        Iterates through errors sorted by probability (descending).
+        Returns the first class (current_best XOR error) not already explored.
+
+        Parameters
+        ----------
+        current_best_class : 1D numpy array of bool
+            The current best logical class (offset for XOR).
+        sorted_error_indices : 1D numpy array of int
+            Error indices sorted by probability in descending order.
+        explored_classes_set : set of tuple
+            Set of already explored logical classes as tuples.
+
+        Returns
+        -------
+        next_class : 1D numpy array of bool or None
+            The next unexplored logical class, or None if all classes have been explored.
+        """
+        num_observables = len(current_best_class)
+        for error_idx in sorted_error_indices:
+            if error_idx == 0:
+                continue  # Skip identity
+            error_pattern = self._index_to_logical_class(
+                int(error_idx), num_observables
+            )
+            candidate_class = current_best_class ^ error_pattern
+            if tuple(candidate_class) not in explored_classes_set:
+                return candidate_class
+        return None
+
+    def _sample_next_wr_adaptive_class(
+        self,
+        current_best_class: np.ndarray,
+        valid_error_indices: np.ndarray,
+        probabilities: np.ndarray,
+        explored_classes_set: set,
+        max_retries: int = 1000,
+    ) -> np.ndarray | None:
+        """
+        Sample the next unexplored logical class for weighted-random-adaptive.
+
+        Uses rejection sampling: samples error from distribution, rejects if
+        resulting class already explored.
+
+        Parameters
+        ----------
+        current_best_class : 1D numpy array of bool
+            The current best logical class (offset for XOR).
+        valid_error_indices : 1D numpy array of int
+            Valid error indices (excluding identity).
+        probabilities : 1D numpy array of float
+            Normalized probabilities for each valid error index.
+        explored_classes_set : set of tuple
+            Set of already explored logical classes as tuples.
+        max_retries : int, optional
+            Maximum number of sampling attempts before giving up. Defaults to 1000.
+
+        Returns
+        -------
+        next_class : 1D numpy array of bool or None
+            The next unexplored logical class, or None if max_retries exceeded.
+        """
+        num_observables = len(current_best_class)
+
+        for _ in range(max_retries):
+            error_idx = np.random.choice(valid_error_indices, p=probabilities)
+            error_pattern = self._index_to_logical_class(
+                int(error_idx), num_observables
+            )
+            candidate_class = current_best_class ^ error_pattern
+            if tuple(candidate_class) not in explored_classes_set:
+                return candidate_class
+
+        return None  # Failed to find unexplored class
+
     def _perform_fixed_logical_class_decoding(
         self,
         detector_outcomes: np.ndarray,
@@ -635,20 +718,26 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             - 'random': Randomly sample logical classes uniformly.
             - 'most-likely-first': Deterministically select top classes by distribution.
             - 'weighted-random': Sample classes with probabilities from distribution.
+            - 'most-likely-first-adaptive': Like most-likely-first but updates base
+              class when better class found during exploration.
+            - 'weighted-random-adaptive': Like weighted-random but updates base
+              class when better class found during exploration.
         num_classes_to_explore : int, optional
             Total number of logical classes to explore including the initial best class.
             Required when `logical_gap_proxy_method` is 'random', 'most-likely-first',
-            or 'weighted-random'.
+            'weighted-random', 'most-likely-first-adaptive', or 'weighted-random-adaptive'.
         compute_all_intermediate_gap_proxies : bool, optional
             If True and `logical_gap_proxy_method` is 'random', 'most-likely-first',
-            or 'weighted-random', compute and store gap proxies for all intermediate
-            numbers of explored logical classes. Defaults to False.
+            'weighted-random', 'most-likely-first-adaptive', or 'weighted-random-adaptive',
+            compute and store gap proxies for all intermediate numbers of explored logical
+            classes. Defaults to False.
         logical_error_distribution : 1D numpy array of float, optional
             Distribution over logical errors with shape (2^k,) where k is the number
             of observables. Index i corresponds to logical error with bit pattern
             i = sum(b_j * 2^j) for j=0..k-1. Higher values indicate more probable
-            errors. Required when `logical_gap_proxy_method` is 'most-likely-first'
-            or 'weighted-random'. Values are auto-normalized internally.
+            errors. Required when `logical_gap_proxy_method` is 'most-likely-first',
+            'weighted-random', 'most-likely-first-adaptive', or 'weighted-random-adaptive'.
+            Values are auto-normalized internally.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
 
@@ -664,7 +753,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             Dictionary mapping the number of explored logical classes to the
             corresponding gap proxy. Only populated when `compute_all_intermediate_gap_proxies`
             is True and `logical_gap_proxy_method` is 'random', 'most-likely-first',
-            or 'weighted-random'.
+            'weighted-random', 'most-likely-first-adaptive', or 'weighted-random-adaptive'.
         """
         if verbose:
             print("  Computing logical gap proxy...")
@@ -680,10 +769,13 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             "random",
             "most-likely-first",
             "weighted-random",
+            "most-likely-first-adaptive",
+            "weighted-random-adaptive",
         ):
             raise ValueError(
                 f"Invalid logical_gap_proxy_method: {logical_gap_proxy_method}. "
-                "Must be None, 'nearby', 'random', 'most-likely-first', or 'weighted-random'."
+                "Must be None, 'nearby', 'random', 'most-likely-first', 'weighted-random', "
+                "'most-likely-first-adaptive', or 'weighted-random-adaptive'."
             )
 
         # Validate num_classes_to_explore for 'random' method
@@ -696,8 +788,13 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             if num_classes_to_explore < 1:
                 raise ValueError("num_classes_to_explore must be >= 1")
 
-        # Validate parameters for 'most-likely-first' and 'weighted-random' methods
-        if logical_gap_proxy_method in ("most-likely-first", "weighted-random"):
+        # Validate parameters for methods that require distribution
+        if logical_gap_proxy_method in (
+            "most-likely-first",
+            "weighted-random",
+            "most-likely-first-adaptive",
+            "weighted-random-adaptive",
+        ):
             if logical_error_distribution is None:
                 raise ValueError(
                     "logical_error_distribution must be provided when "
@@ -840,6 +937,167 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 if compute_all_intermediate_gap_proxies:
                     explored_count += 1
                     pred_llr_float = float(pred_llr)
+                    if pred_llr_float <= running_best_llr:
+                        running_second_best_llr = running_best_llr
+                        running_best_llr = pred_llr_float
+                    elif pred_llr_float < running_second_best_llr:
+                        running_second_best_llr = pred_llr_float
+
+                    if explored_count >= 2:
+                        effective_second = (
+                            running_second_best_llr
+                            if running_second_best_llr != float("inf")
+                            else running_best_llr
+                        )
+                        gap_proxies_by_num_classes[explored_count] = float(
+                            effective_second - running_best_llr
+                        )
+
+        elif logical_gap_proxy_method == "most-likely-first-adaptive":
+            # Adaptive exploration: update base class when better class found
+            # Pre-sort error indices by distribution (descending probability)
+            sorted_error_indices = np.argsort(logical_error_distribution)[::-1]
+
+            # Track explored classes as set for O(1) lookup
+            explored_classes_set = {tuple(original_logical_class)}
+            current_best_class = original_logical_class.copy()
+            current_best_llr = float(original_pred_llr)
+
+            # Initialize intermediate tracking
+            if compute_all_intermediate_gap_proxies:
+                running_best_llr = float(original_pred_llr)
+                running_second_best_llr = float("inf")
+                explored_count = 1
+
+            if verbose:
+                print(
+                    f"  Exploring up to {num_classes_to_explore} logical classes "
+                    f"using most-likely-first-adaptive"
+                )
+
+            # Explore until we have num_classes_to_explore classes
+            while len(explored_classes_set) < num_classes_to_explore:
+                next_class = self._get_next_mlf_adaptive_class(
+                    current_best_class, sorted_error_indices, explored_classes_set
+                )
+                if next_class is None:
+                    if verbose:
+                        print(
+                            f"    No more unexplored classes available "
+                            f"(explored {len(explored_classes_set)} classes)"
+                        )
+                    break  # No more unexplored classes
+
+                # Decode and store
+                pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
+                    detector_outcomes, next_class, verbose=verbose
+                )
+                explored_classes[tuple(next_class)] = (pred_llr, pred_pattern)
+                explored_classes_set.add(tuple(next_class))
+
+                # Update current best if this class is better
+                pred_llr_float = float(pred_llr)
+                if pred_llr_float < current_best_llr:
+                    if verbose:
+                        print(
+                            f"    New best class found: {next_class} "
+                            f"(llr={pred_llr_float:.4f} < {current_best_llr:.4f})"
+                        )
+                    current_best_class = next_class.copy()
+                    current_best_llr = pred_llr_float
+
+                # Track intermediate gap proxies if requested
+                if compute_all_intermediate_gap_proxies:
+                    explored_count += 1
+                    if pred_llr_float <= running_best_llr:
+                        running_second_best_llr = running_best_llr
+                        running_best_llr = pred_llr_float
+                    elif pred_llr_float < running_second_best_llr:
+                        running_second_best_llr = pred_llr_float
+
+                    if explored_count >= 2:
+                        effective_second = (
+                            running_second_best_llr
+                            if running_second_best_llr != float("inf")
+                            else running_best_llr
+                        )
+                        gap_proxies_by_num_classes[explored_count] = float(
+                            effective_second - running_best_llr
+                        )
+
+        elif logical_gap_proxy_method == "weighted-random-adaptive":
+            # Adaptive exploration with weighted random sampling
+            num_observables = len(original_logical_class)
+            total_num_logical_classes = 1 << num_observables
+
+            # Prepare distribution (exclude identity)
+            valid_error_indices = np.arange(1, total_num_logical_classes)
+            weights = logical_error_distribution[valid_error_indices].astype(float)
+            weight_sum = weights.sum()
+            if weight_sum <= 0:
+                probabilities = np.ones(len(weights)) / len(weights)
+                if verbose:
+                    print(
+                        "  Warning: All distribution weights are zero, "
+                        "falling back to uniform sampling"
+                    )
+            else:
+                probabilities = weights / weight_sum
+
+            # Track explored classes as set for O(1) lookup
+            explored_classes_set = {tuple(original_logical_class)}
+            current_best_class = original_logical_class.copy()
+            current_best_llr = float(original_pred_llr)
+
+            # Initialize intermediate tracking
+            if compute_all_intermediate_gap_proxies:
+                running_best_llr = float(original_pred_llr)
+                running_second_best_llr = float("inf")
+                explored_count = 1
+
+            if verbose:
+                print(
+                    f"  Exploring up to {num_classes_to_explore} logical classes "
+                    f"using weighted-random-adaptive"
+                )
+
+            # Explore until we have num_classes_to_explore classes
+            while len(explored_classes_set) < num_classes_to_explore:
+                next_class = self._sample_next_wr_adaptive_class(
+                    current_best_class,
+                    valid_error_indices,
+                    probabilities,
+                    explored_classes_set,
+                )
+                if next_class is None:
+                    if verbose:
+                        print(
+                            f"    Failed to sample unexplored class after max retries "
+                            f"(explored {len(explored_classes_set)} classes)"
+                        )
+                    break  # Failed to find unexplored class
+
+                # Decode and store
+                pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
+                    detector_outcomes, next_class, verbose=verbose
+                )
+                explored_classes[tuple(next_class)] = (pred_llr, pred_pattern)
+                explored_classes_set.add(tuple(next_class))
+
+                # Update current best if this class is better
+                pred_llr_float = float(pred_llr)
+                if pred_llr_float < current_best_llr:
+                    if verbose:
+                        print(
+                            f"    New best class found: {next_class} "
+                            f"(llr={pred_llr_float:.4f} < {current_best_llr:.4f})"
+                        )
+                    current_best_class = next_class.copy()
+                    current_best_llr = pred_llr_float
+
+                # Track intermediate gap proxies if requested
+                if compute_all_intermediate_gap_proxies:
+                    explored_count += 1
                     if pred_llr_float <= running_best_llr:
                         running_second_best_llr = running_best_llr
                         running_best_llr = pred_llr_float
@@ -1137,24 +1395,30 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             - 'random': Randomly sample logical classes uniformly.
             - 'most-likely-first': Deterministically select top classes by distribution.
             - 'weighted-random': Sample classes with probabilities from distribution.
+            - 'most-likely-first-adaptive': Like most-likely-first but updates base
+              class when better class found during exploration.
+            - 'weighted-random-adaptive': Like weighted-random but updates base
+              class when better class found during exploration.
             Only used when compute_logical_gap_proxy is True. Defaults to None.
         num_classes_to_explore : int, optional
             Total number of logical classes to explore including the initial best class.
             Required when `logical_gap_proxy_method` is 'random', 'most-likely-first',
-            or 'weighted-random'. Only used when compute_logical_gap_proxy is True.
-            Defaults to None.
+            'weighted-random', 'most-likely-first-adaptive', or 'weighted-random-adaptive'.
+            Only used when compute_logical_gap_proxy is True. Defaults to None.
         compute_all_intermediate_gap_proxies : bool, optional
             If True and `logical_gap_proxy_method` is 'random', 'most-likely-first',
-            or 'weighted-random', compute additional gap proxies `gap_proxy_{i}` for
-            all i from 2 up to the explored number of logical classes. Only used when
-            compute_logical_gap_proxy is True. Defaults to False.
+            'weighted-random', 'most-likely-first-adaptive', or 'weighted-random-adaptive',
+            compute additional gap proxies `gap_proxy_{i}` for all i from 2 up to the
+            explored number of logical classes. Only used when compute_logical_gap_proxy
+            is True. Defaults to False.
         logical_error_distribution : 1D numpy array of float, optional
             Distribution over logical errors with shape (2^k,) where k is the number
             of observables. Index i corresponds to logical error with bit pattern
             i = sum(b_j * 2^j) for j=0..k-1. Higher values indicate more probable
-            errors. Required when `logical_gap_proxy_method` is 'most-likely-first'
-            or 'weighted-random'. Values are auto-normalized internally. Only used
-            when compute_logical_gap_proxy is True. Defaults to None.
+            errors. Required when `logical_gap_proxy_method` is 'most-likely-first',
+            'weighted-random', 'most-likely-first-adaptive', or 'weighted-random-adaptive'.
+            Values are auto-normalized internally. Only used when compute_logical_gap_proxy
+            is True. Defaults to None.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
         _benchmarking : bool
@@ -1181,7 +1445,8 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             - gap_proxy (float): Logical gap proxy (only if compute_logical_gap_proxy=True)
             - gap_proxy_{i} (float): Logical gap proxy after exploring i logical classes
               (only if compute_all_intermediate_gap_proxies=True and logical_gap_proxy_method
-              is 'random', 'most-likely-first', or 'weighted-random')
+              is 'random', 'most-likely-first', 'weighted-random', 'most-likely-first-adaptive',
+              or 'weighted-random-adaptive')
             - cluster_size_norm_frac_{order} (float): Norm fraction of cluster sizes for each order
             - cluster_llr_norm_frac_{order} (float): Norm fraction of cluster LLRs for each order
         """

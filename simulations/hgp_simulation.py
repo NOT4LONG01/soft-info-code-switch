@@ -147,7 +147,13 @@ def simulate(
 
     # Pre-compute logical error distribution for methods that require it
     if (
-        logical_gap_proxy_method in ("most-likely-first", "weighted-random")
+        logical_gap_proxy_method
+        in (
+            "most-likely-first",
+            "weighted-random",
+            "most-likely-first-adaptive",
+            "weighted-random-adaptive",
+        )
         and logical_error_distribution is None
     ):
         # Store distribution in shared location (independent of gap proxy method)
@@ -295,6 +301,16 @@ if __name__ == "__main__":
             dir_name = (
                 f"hgp_minsum_iter30_lsd0_raw_gap_proxy_wr_{num_classes_to_explore}"
             )
+        elif logical_gap_proxy_method == "most-likely-first-adaptive":
+            assert num_classes_to_explore is not None
+            dir_name = (
+                f"hgp_minsum_iter30_lsd0_raw_gap_proxy_mlfa_{num_classes_to_explore}"
+            )
+        elif logical_gap_proxy_method == "weighted-random-adaptive":
+            assert num_classes_to_explore is not None
+            dir_name = (
+                f"hgp_minsum_iter30_lsd0_raw_gap_proxy_wra_{num_classes_to_explore}"
+            )
         else:
             dir_name = "hgp_minsum_iter30_lsd0_raw_gap_proxy"
     else:
@@ -317,7 +333,12 @@ if __name__ == "__main__":
     print("compute_logical_gap_proxy =", compute_logical_gap_proxy)
     print("logical_gap_proxy_method =", logical_gap_proxy_method)
     print("num_classes_to_explore =", num_classes_to_explore)
-    if logical_gap_proxy_method in ("most-likely-first", "weighted-random"):
+    if logical_gap_proxy_method in (
+        "most-likely-first",
+        "weighted-random",
+        "most-likely-first-adaptive",
+        "weighted-random-adaptive",
+    ):
         print("precompute_distribution_shots =", precompute_distribution_shots)
 
     print(f"\n==== Starting HGP simulations up to {total_shots} shots ====")

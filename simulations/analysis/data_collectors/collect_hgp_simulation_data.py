@@ -12,6 +12,8 @@ GAP_PROXY_METHOD_SUFFIXES = {
     "random": "random",
     "mlf": "mlf",
     "weighted-random": "wr",
+    "mlf-adaptive": "mlfa",
+    "weighted-random-adaptive": "wra",
 }
 
 
@@ -21,7 +23,8 @@ if __name__ == "__main__":
     collect_gap_proxy = True
 
     # Gap proxy configuration
-    gap_proxy_method = "nearby"  # 'nearby', 'random', 'mlf', 'weighted-random'
+    # Options: 'nearby', 'random', 'mlf', 'weighted-random', 'mlf-adaptive', 'weighted-random-adaptive'
+    gap_proxy_method = "nearby"
     num_logical_classes = (
         24  # Number of logical classes explored (not used for 'nearby')
     )

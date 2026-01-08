@@ -588,6 +588,149 @@ class TestSoftOutputsBpLsdDecoder:
         assert "gap_proxy" in soft_outputs
         assert isinstance(soft_outputs["gap_proxy"], float)
 
+    def test_logical_gap_proxy_mlf_adaptive_method(self, circuit_data):
+        """Test logical gap proxy computation with 'most-likely-first-adaptive' method."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Create a simple logical error distribution
+        np.random.seed(42)
+        logical_error_distribution = np.random.rand(1 << num_observables)
+        # Make some errors more likely than others
+        logical_error_distribution[1] = 10.0
+        if num_observables > 1:
+            logical_error_distribution[2] = 5.0
+
+        pred, pred_bp, converge, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            logical_gap_proxy_method="most-likely-first-adaptive",
+            num_classes_to_explore=3,
+            logical_error_distribution=logical_error_distribution,
+        )
+
+        assert "gap_proxy" in soft_outputs
+        assert isinstance(soft_outputs["gap_proxy"], float)
+        assert not np.isnan(soft_outputs["gap_proxy"])
+        assert soft_outputs["gap_proxy"] >= 0.0
+
+    def test_logical_gap_proxy_mlf_adaptive_with_intermediate(self, circuit_data):
+        """Test 'most-likely-first-adaptive' method with intermediate gap proxies."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Create distribution with varying probabilities
+        np.random.seed(123)
+        logical_error_distribution = np.random.rand(1 << num_observables)
+
+        num_classes = min(4, (1 << num_observables))
+        _, _, _, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            logical_gap_proxy_method="most-likely-first-adaptive",
+            num_classes_to_explore=num_classes,
+            logical_error_distribution=logical_error_distribution,
+            compute_all_intermediate_gap_proxies=True,
+        )
+
+        # Check intermediate gap proxies exist
+        for i in range(2, num_classes + 1):
+            key = f"gap_proxy_{i}"
+            assert key in soft_outputs, f"Missing {key}"
+            assert isinstance(soft_outputs[key], float)
+            assert soft_outputs[key] >= 0.0
+
+        # Final gap_proxy should match gap_proxy_{num_classes}
+        assert "gap_proxy" in soft_outputs
+        assert np.isclose(
+            soft_outputs["gap_proxy"], soft_outputs[f"gap_proxy_{num_classes}"]
+        )
+
+    def test_logical_gap_proxy_wr_adaptive_method(self, circuit_data):
+        """Test logical gap proxy computation with 'weighted-random-adaptive' method."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Create a simple logical error distribution
+        np.random.seed(42)
+        logical_error_distribution = np.random.rand(1 << num_observables)
+        # Make some errors more likely than others
+        logical_error_distribution[1] = 10.0
+        if num_observables > 1:
+            logical_error_distribution[2] = 5.0
+
+        pred, pred_bp, converge, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            logical_gap_proxy_method="weighted-random-adaptive",
+            num_classes_to_explore=3,
+            logical_error_distribution=logical_error_distribution,
+        )
+
+        assert "gap_proxy" in soft_outputs
+        assert isinstance(soft_outputs["gap_proxy"], float)
+        assert not np.isnan(soft_outputs["gap_proxy"])
+        assert soft_outputs["gap_proxy"] >= 0.0
+
+    def test_logical_gap_proxy_wr_adaptive_with_intermediate(self, circuit_data):
+        """Test 'weighted-random-adaptive' method with intermediate gap proxies."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Create distribution with varying probabilities
+        np.random.seed(123)
+        logical_error_distribution = np.random.rand(1 << num_observables)
+
+        num_classes = min(4, (1 << num_observables))
+        _, _, _, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            logical_gap_proxy_method="weighted-random-adaptive",
+            num_classes_to_explore=num_classes,
+            logical_error_distribution=logical_error_distribution,
+            compute_all_intermediate_gap_proxies=True,
+        )
+
+        # Check intermediate gap proxies exist
+        for i in range(2, num_classes + 1):
+            key = f"gap_proxy_{i}"
+            assert key in soft_outputs, f"Missing {key}"
+            assert isinstance(soft_outputs[key], float)
+            assert soft_outputs[key] >= 0.0
+
+        # Final gap_proxy should match gap_proxy_{num_classes}
+        assert "gap_proxy" in soft_outputs
+        assert np.isclose(
+            soft_outputs["gap_proxy"], soft_outputs[f"gap_proxy_{num_classes}"]
+        )
+
+    def test_adaptive_methods_explore_correct_number_of_classes(self, circuit_data):
+        """Test that adaptive methods explore the correct number of classes."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        np.random.seed(42)
+        logical_error_distribution = np.random.rand(1 << num_observables)
+        logical_error_distribution[1] = 10.0
+
+        num_classes = min(5, (1 << num_observables))
+
+        # Test both adaptive methods with intermediate gap proxies
+        for method in ["most-likely-first-adaptive", "weighted-random-adaptive"]:
+            _, _, _, soft_outputs = decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method=method,
+                num_classes_to_explore=num_classes,
+                logical_error_distribution=logical_error_distribution,
+                compute_all_intermediate_gap_proxies=True,
+            )
+
+            # Should have gap_proxy_2 through gap_proxy_{num_classes}
+            expected_keys = [f"gap_proxy_{i}" for i in range(2, num_classes + 1)]
+            for key in expected_keys:
+                assert key in soft_outputs, f"Missing {key} for method {method}"
+
     def test_compute_cluster_stats_false(self, circuit_data):
         """Test that cluster stats are not computed when disabled."""
         decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
