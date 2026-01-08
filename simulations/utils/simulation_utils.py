@@ -141,8 +141,10 @@ def precompute_logical_error_distribution(
     Pre-compute logical error distribution using parallel processing.
 
     This function first checks if a distribution file already exists at the
-    specified path. If so, it loads and returns the existing distribution.
-    Otherwise, it computes the distribution in parallel and saves it.
+    specified path. If the existing distribution has at least the requested
+    number of shots, it is loaded and returned. If the existing distribution
+    has fewer shots, only the remaining shots are computed and added to the
+    existing distribution incrementally.
 
     Parameters
     ----------
@@ -187,41 +189,66 @@ def precompute_logical_error_distribution(
     ... )
     """
     # Check if distribution file already exists
+    existing_distribution = None
+    existing_shots = 0
     if os.path.exists(save_path):
-        distribution = np.load(save_path)
-        if verbose:
-            print(f"   Loaded existing logical error distribution from {save_path}")
-        return distribution
+        existing_distribution = np.load(save_path)
+        existing_shots = int(existing_distribution.sum())
+        if existing_shots >= shots:
+            if verbose:
+                print(
+                    f"   Loaded existing logical error distribution from {save_path} "
+                    f"({existing_shots:,} shots >= {shots:,} requested)"
+                )
+            return existing_distribution
+
+    # Compute only the remaining shots needed
+    shots_to_compute = shots - existing_shots
 
     # Distribute shots across workers
-    num_workers = min(n_jobs, shots)
-    shots_per_worker = shots // num_workers
-    remainder = shots % num_workers
+    num_workers = min(n_jobs, shots_to_compute)
+    shots_per_worker = shots_to_compute // num_workers
+    remainder = shots_to_compute % num_workers
     worker_shots = [
         shots_per_worker + (1 if i < remainder else 0) for i in range(num_workers)
     ]
 
     if verbose:
-        print(
-            f"   Pre-computing logical error distribution with {shots} shots "
-            f"using {num_workers} workers..."
-        )
+        if existing_shots > 0:
+            print(
+                f"   Existing distribution has {existing_shots:,} shots. "
+                f"Computing {shots_to_compute:,} additional shots using {num_workers} workers..."
+            )
+        else:
+            print(
+                f"   Pre-computing logical error distribution with {shots_to_compute:,} shots "
+                f"using {num_workers} workers..."
+            )
     t0_dist = datetime.now()
 
     # Run parallel distribution collection
+    # Use different seed offset when appending to avoid correlation with existing data
+    seed_offset = existing_shots if existing_shots > 0 else 0
     results = Parallel(n_jobs=num_workers)(
         delayed(collect_logical_error_distribution_fast)(
             circuit=circuit,
             shots=worker_shot_count,
             decoder_params=decoder_params,
-            seed=base_seed + i,  # Different seed per worker for diversity
+            seed=base_seed + seed_offset + i,
         )
         for i, worker_shot_count in enumerate(worker_shots)
     )
 
     # Aggregate distributions from all workers
-    distribution = sum(dist for dist, _ in results)
-    total_shots = sum(meta["total_shots"] for _, meta in results)
+    new_distribution = sum(dist for dist, _ in results)
+
+    # Combine with existing distribution if present
+    if existing_distribution is not None:
+        distribution = existing_distribution + new_distribution
+    else:
+        distribution = new_distribution
+
+    total_shots = int(distribution.sum())
     correct_count = distribution[0]
     logical_error_rate = 1.0 - (correct_count / total_shots)
     nonzero_errors = int(np.sum(distribution[1:] > 0))
@@ -239,7 +266,7 @@ def precompute_logical_error_distribution(
     if verbose:
         print(
             f"   Logical error distribution computed in {elapsed:.1f}s "
-            f"(error rate: {logical_error_rate:.4f}, "
+            f"(total: {total_shots:,} shots, error rate: {logical_error_rate:.4f}, "
             f"nonzero errors: {nonzero_errors}). "
             f"Saved to {save_path}"
         )

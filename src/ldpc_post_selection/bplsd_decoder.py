@@ -1181,7 +1181,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             - gap_proxy (float): Logical gap proxy (only if compute_logical_gap_proxy=True)
             - gap_proxy_{i} (float): Logical gap proxy after exploring i logical classes
               (only if compute_all_intermediate_gap_proxies=True and logical_gap_proxy_method
-              is 'random' or 'most-likely-first')
+              is 'random', 'most-likely-first', or 'weighted-random')
             - cluster_size_norm_frac_{order} (float): Norm fraction of cluster sizes for each order
             - cluster_llr_norm_frac_{order} (float): Norm fraction of cluster LLRs for each order
         """

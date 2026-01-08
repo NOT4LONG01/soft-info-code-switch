@@ -68,26 +68,29 @@ def simulate(
         Method for exploring logical classes when computing gap proxy:
         - None: Explore all possible logical classes (exact gap proxy).
         - 'nearby': Only explore nearby logical classes (flip one bit at a time).
-        - 'random': Randomly sample logical classes for exploration.
-        - 'most-likely-first': Select classes based on prior logical error distribution.
+        - 'random': Randomly sample logical classes uniformly.
+        - 'most-likely-first': Deterministically select top classes by distribution.
+        - 'weighted-random': Sample classes with probabilities from distribution.
         Only used when compute_logical_gap_proxy is True. Defaults to None.
     num_classes_to_explore : int, optional
         Total number of logical classes to explore including the initial best class.
-        Required when `logical_gap_proxy_method` is 'random' or 'most-likely-first'.
-        Only used when compute_logical_gap_proxy is True. Defaults to None.
+        Required when `logical_gap_proxy_method` is 'random', 'most-likely-first',
+        or 'weighted-random'. Only used when compute_logical_gap_proxy is True.
+        Defaults to None.
     compute_all_intermediate_gap_proxies : bool, optional
-        If True and `logical_gap_proxy_method` is 'random' or 'most-likely-first',
-        compute additional gap proxies `gap_proxy_{i}` for all i from 2 up to the
-        explored number of logical classes. Only used when compute_logical_gap_proxy
-        is True. Defaults to False.
+        If True and `logical_gap_proxy_method` is 'random', 'most-likely-first',
+        or 'weighted-random', compute additional gap proxies `gap_proxy_{i}` for
+        all i from 2 up to the explored number of logical classes. Only used when
+        compute_logical_gap_proxy is True. Defaults to False.
     logical_error_distribution : 1D numpy array of float, optional
-        Pre-computed logical error distribution for 'most-likely-first' method.
-        If None and method is 'most-likely-first', will be computed automatically
-        using `precompute_distribution_shots`. Defaults to None.
+        Pre-computed logical error distribution for 'most-likely-first' or
+        'weighted-random' methods. If None and method requires it, will be
+        computed automatically using `precompute_distribution_shots`.
+        Defaults to None.
     precompute_distribution_shots : int, optional
         Number of shots to use for pre-computing logical error distribution when
-        `logical_gap_proxy_method` is 'most-likely-first' and no distribution is
-        provided. Defaults to None (uses 100,000 shots).
+        `logical_gap_proxy_method` is 'most-likely-first' or 'weighted-random'
+        and no distribution is provided. Defaults to None (uses 100,000 shots).
     include_cluster_stats : bool, optional
         Whether to include cluster statistics. Defaults to True.
 
@@ -124,12 +127,29 @@ def simulate(
         decoder = SoftOutputsBpLsdDecoder(circuit=circuit)
         np.save(prior_path, decoder.priors)
 
-    # Pre-compute logical error distribution for 'most-likely-first' method
+    # Pre-compute logical error distribution for methods that require it
     if (
-        logical_gap_proxy_method == "most-likely-first"
+        logical_gap_proxy_method in ("most-likely-first", "weighted-random")
         and logical_error_distribution is None
     ):
-        distribution_path = os.path.join(sub_data_dir, "logical_error_distribution.npy")
+        # Store distribution in shared location (independent of gap proxy method)
+        # Pattern: data/logical_error_distributions/bb_{decoder_settings}/{code_params}.npy
+        base_data_dir = os.path.dirname(data_dir)
+        bp_method_short = (
+            "minsum"
+            if decoder_prms["bp_method"] == "minimum_sum"
+            else decoder_prms["bp_method"]
+        )
+        lsd_method_short = decoder_prms["lsd_method"].lower().replace("_", "")
+        decoder_settings = (
+            f"{bp_method_short}_iter{decoder_prms['max_iter']}_{lsd_method_short}"
+        )
+        distribution_dir = os.path.join(
+            base_data_dir, f"logical_error_distributions/bb_{decoder_settings}"
+        )
+        os.makedirs(distribution_dir, exist_ok=True)
+        distribution_path = os.path.join(distribution_dir, f"n{n}_T{T}_p{p}.npy")
+
         if precompute_distribution_shots is None:
             precompute_distribution_shots = 100_000
 
@@ -224,12 +244,8 @@ if __name__ == "__main__":
     total_shots = round(1e6)
     compute_logical_gap_proxy = True
     include_cluster_stats = False
-    logical_gap_proxy_method = (
-        "most-likely-first"  # None, 'nearby', 'random', or 'most-likely-first'
-    )
-    num_classes_to_explore = (
-        24  # Required when method is 'random' or 'most-likely-first'
-    )
+    logical_gap_proxy_method = "weighted-random"  # None, 'nearby', 'random', 'most-likely-first', or 'weighted-random'
+    num_classes_to_explore = 24  # Required when method is 'random', 'most-likely-first', or 'weighted-random'
     compute_all_intermediate_gap_proxies = True
     precompute_distribution_shots = 1000 * 2**12
 
@@ -275,7 +291,7 @@ if __name__ == "__main__":
     print("compute_logical_gap_proxy =", compute_logical_gap_proxy)
     print("logical_gap_proxy_method =", logical_gap_proxy_method)
     print("num_classes_to_explore =", num_classes_to_explore)
-    if logical_gap_proxy_method == "most-likely-first":
+    if logical_gap_proxy_method in ("most-likely-first", "weighted-random"):
         print("precompute_distribution_shots =", precompute_distribution_shots)
 
     print(f"\n==== Starting simulations up to {total_shots} shots ====")
