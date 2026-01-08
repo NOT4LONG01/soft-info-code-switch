@@ -6,15 +6,29 @@ from simulations.analysis.data_collectors.data_collection import (
     DATA_DIR,
 )
 
+# Mapping from method name to directory/dataset suffix
+GAP_PROXY_METHOD_SUFFIXES = {
+    "nearby": "nearby",
+    "random": "random",
+    "mlf": "mlf",
+    "weighted-random": "wr",
+}
+
 
 if __name__ == "__main__":
     # Select which datasets to collect
     collect_cluster_stats = False
     collect_gap_proxy = True
 
-    orders = [0.5, 1, 2, np.inf]
+    # Gap proxy configuration
+    gap_proxy_method = "nearby"  # 'nearby', 'random', 'mlf', 'weighted-random'
+    num_logical_classes = (
+        24  # Number of logical classes explored (not used for 'nearby')
+    )
+    compute_all_gap_proxies = True  # Whether gap_proxy_2, gap_proxy_3, ... exist
 
     # Cluster stats configuration
+    orders = [0.5, 1, 2, np.inf]
     ascending_confidences = {
         "pred_llr": False,
         "detector_density": False,
@@ -23,13 +37,6 @@ if __name__ == "__main__":
     }
     data_dir_name = "hgp_minsum_iter30_lsd0_raw"
     dataset_name = "hgp"
-
-    # Gap proxy configuration
-    ascending_confidences_gap_proxy = {
-        "gap_proxy": True,
-    }
-    gap_proxy_data_dir_name = "hgp_minsum_iter30_lsd0_raw_gap_proxy_nearby"
-    gap_proxy_dataset_name = "hgp_gap_proxy"
 
     # Process cluster stats data
     if collect_cluster_stats:
@@ -50,9 +57,39 @@ if __name__ == "__main__":
 
     # Process gap_proxy data
     if collect_gap_proxy:
+        method_suffix = GAP_PROXY_METHOD_SUFFIXES[gap_proxy_method]
+
+        # Build data directory and dataset names
+        if gap_proxy_method == "nearby":
+            gap_proxy_data_dir_name = (
+                f"hgp_minsum_iter30_lsd0_raw_gap_proxy_{method_suffix}"
+            )
+            gap_proxy_dataset_name = "hgp_gap_proxy"
+        else:
+            gap_proxy_data_dir_name = f"hgp_minsum_iter30_lsd0_raw_gap_proxy_{method_suffix}_{num_logical_classes}"
+            gap_proxy_dataset_name = (
+                f"hgp_gap_proxy_{method_suffix}_{num_logical_classes}"
+            )
+
         gap_proxy_data_dir = str(DATA_DIR / gap_proxy_data_dir_name)
+
         if os.path.exists(gap_proxy_data_dir):
-            print("\nProcessing HGP code gap_proxy data...")
+            if gap_proxy_method == "nearby":
+                print(f"\nProcessing HGP code gap_proxy ({gap_proxy_method}) data...")
+            else:
+                print(
+                    f"\nProcessing HGP code gap_proxy ({gap_proxy_method} with "
+                    f"{num_logical_classes} classes) data..."
+                )
+
+            # Build ascending_confidences dict for gap_proxy columns
+            ascending_confidences_gap_proxy = {"gap_proxy": True}
+
+            # Add gap_proxy_i columns if compute_all_gap_proxies is True
+            if compute_all_gap_proxies and gap_proxy_method != "nearby":
+                for i in range(2, num_logical_classes + 1):
+                    ascending_confidences_gap_proxy[f"gap_proxy_{i}"] = True
+
             process_dataset(
                 data_dir=gap_proxy_data_dir,
                 dataset_name=gap_proxy_dataset_name,
@@ -62,6 +99,9 @@ if __name__ == "__main__":
                 verbose=False,
             )
         else:
-            print(f"\nSkipping gap_proxy data: {gap_proxy_data_dir} not found")
+            print(
+                f"\nSkipping gap_proxy ({gap_proxy_method}) data: "
+                f"{gap_proxy_data_dir} not found"
+            )
 
     print("\nData collection complete!")
