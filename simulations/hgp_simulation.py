@@ -270,6 +270,11 @@ if __name__ == "__main__":
             dir_name = (
                 f"hgp_minsum_iter30_lsd0_raw_gap_proxy_mlf_{num_classes_to_explore}"
             )
+        elif logical_gap_proxy_method == "weighted-random":
+            assert num_classes_to_explore is not None
+            dir_name = (
+                f"hgp_minsum_iter30_lsd0_raw_gap_proxy_wr_{num_classes_to_explore}"
+            )
         else:
             dir_name = "hgp_minsum_iter30_lsd0_raw_gap_proxy"
     else:

@@ -446,6 +446,148 @@ class TestSoftOutputsBpLsdDecoder:
         # [False, False] XOR [True, False] = [True, False]
         assert np.array_equal(classes[1], np.array([True, False]))
 
+    def test_logical_gap_proxy_weighted_random_method(self, circuit_data):
+        """Test logical gap proxy computation with 'weighted-random' method."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Create a simple logical error distribution
+        np.random.seed(42)
+        logical_error_distribution = np.random.rand(1 << num_observables)
+        # Make some errors more likely than others
+        logical_error_distribution[1] = 10.0  # Single-bit flip on first observable
+        if num_observables > 1:
+            logical_error_distribution[2] = 5.0  # Single-bit flip on second observable
+
+        pred, pred_bp, converge, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            logical_gap_proxy_method="weighted-random",
+            num_classes_to_explore=3,
+            logical_error_distribution=logical_error_distribution,
+        )
+
+        assert "gap_proxy" in soft_outputs
+        assert isinstance(soft_outputs["gap_proxy"], float)
+        assert not np.isnan(soft_outputs["gap_proxy"])
+        assert soft_outputs["gap_proxy"] >= 0.0
+
+    def test_logical_gap_proxy_weighted_random_with_intermediate(self, circuit_data):
+        """Test 'weighted-random' method with intermediate gap proxies."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Create distribution with varying probabilities
+        np.random.seed(123)
+        logical_error_distribution = np.random.rand(1 << num_observables)
+
+        num_classes = min(4, (1 << num_observables))
+        _, _, _, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            logical_gap_proxy_method="weighted-random",
+            num_classes_to_explore=num_classes,
+            logical_error_distribution=logical_error_distribution,
+            compute_all_intermediate_gap_proxies=True,
+        )
+
+        # Check intermediate gap proxies exist
+        for i in range(2, num_classes + 1):
+            key = f"gap_proxy_{i}"
+            assert key in soft_outputs, f"Missing {key}"
+            assert isinstance(soft_outputs[key], float)
+            assert soft_outputs[key] >= 0.0
+
+        # Final gap_proxy should match gap_proxy_{num_classes}
+        assert "gap_proxy" in soft_outputs
+        assert np.isclose(
+            soft_outputs["gap_proxy"], soft_outputs[f"gap_proxy_{num_classes}"]
+        )
+
+    def test_logical_gap_proxy_weighted_random_invalid_params(self, circuit_data):
+        """Test 'weighted-random' method with invalid parameters."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Test missing logical_error_distribution
+        with pytest.raises(
+            ValueError, match="logical_error_distribution must be provided"
+        ):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method="weighted-random",
+                num_classes_to_explore=3,
+            )
+
+        # Test missing num_classes_to_explore
+        logical_error_distribution = np.ones(1 << num_observables)
+        with pytest.raises(ValueError, match="num_classes_to_explore must be provided"):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method="weighted-random",
+                logical_error_distribution=logical_error_distribution,
+            )
+
+        # Test wrong distribution length
+        wrong_distribution = np.ones(3)  # Wrong length
+        with pytest.raises(ValueError, match="logical_error_distribution has length"):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method="weighted-random",
+                num_classes_to_explore=3,
+                logical_error_distribution=wrong_distribution,
+            )
+
+    def test_sample_weighted_random_logical_classes(self, circuit_data):
+        """Test the _sample_weighted_random_logical_classes helper method."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+
+        best_logical_class = np.array([False, False], dtype=bool)
+        # Distribution: index 3 (11) most likely, index 1 (01) second, index 2 (10) third
+        distribution = np.array([0.0, 0.3, 0.2, 0.5])  # 4 classes for 2 observables
+
+        # Set seed for reproducibility
+        np.random.seed(42)
+
+        # Get 2 additional classes (3 total including best)
+        classes = decoder._sample_weighted_random_logical_classes(
+            best_logical_class=best_logical_class,
+            logical_error_distribution=distribution,
+            num_classes_to_explore=3,
+        )
+
+        # Should return 2 classes
+        assert len(classes) == 2
+
+        # Classes should be boolean arrays
+        for cls in classes:
+            assert cls.dtype == bool
+            assert len(cls) == 2
+
+    def test_weighted_random_all_zero_weights_fallback(self, circuit_data):
+        """Test that 'weighted-random' falls back to uniform when all weights are zero."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Create distribution with all zeros
+        logical_error_distribution = np.zeros(1 << num_observables)
+
+        # Should not raise error - should fall back to uniform
+        np.random.seed(42)
+        pred, pred_bp, converge, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            logical_gap_proxy_method="weighted-random",
+            num_classes_to_explore=3,
+            logical_error_distribution=logical_error_distribution,
+        )
+
+        assert "gap_proxy" in soft_outputs
+        assert isinstance(soft_outputs["gap_proxy"], float)
+
     def test_compute_cluster_stats_false(self, circuit_data):
         """Test that cluster stats are not computed when disabled."""
         decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
