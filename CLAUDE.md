@@ -36,7 +36,7 @@ pytest tests/test_decoder.py::TestSoftOutputsBpLsdDecoder::test_decode_single_sa
   - Sliding window decoding via `decode_sliding_window()` with caching for window structures and decoders
   - Logical gap proxy computation with methods: `None` (exhaustive), `'nearby'`, `'random'`, `'most-likely-first'`, `'weighted-random'`, `'most-likely-first-adaptive'`, `'weighted-random-adaptive'`
 
-- **`logical_error_distribution.py`**: Utilities for collecting logical error distributions from simulations. Used with `'most-likely-first'` gap proxy method.
+- **`logical_error_distribution.py`**: Utilities for collecting logical error distributions from simulations. Used with distribution-based gap proxy methods. See `docs/logical-gap-proxy-methods.md` for comprehensive method descriptions.
 
 - **`matching_decoder.py`**: `SoftOutputsMatchingDecoder` - PyMatching-based decoder computing logical gap for confidence. Explores all logical classes (2^k for k observables) to find the gap between best and second-best predictions.
 
