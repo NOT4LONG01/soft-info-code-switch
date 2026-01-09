@@ -141,7 +141,7 @@ pytest tests/test_decoder.py -v
 ## References
 
 - **Commit SHA**: `d4141d1`
-- **Related documentation**: `docs/doc-weighted-random-gap-proxy.md` (non-adaptive weighted-random method)
+- **Related documentation**: `docs/conversation_logs/260108-weighted-random-gap-proxy.md` (non-adaptive weighted-random method)
 - **Previous commits**:
   - `9eef325` (weighted-random method)
   - `c080827` (most-likely-first method)
