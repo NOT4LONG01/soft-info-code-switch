@@ -226,6 +226,8 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         self,
         excluded_logical_class: np.ndarray,
         num_total_logical_classes: int,
+        coverage_fraction: float | None = None,
+        logical_error_distribution: np.ndarray | None = None,
         verbose: bool = False,
     ) -> List[np.ndarray]:
         """
@@ -238,6 +240,18 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         num_total_logical_classes : int
             Total number of logical classes to explore including `excluded_logical_class`.
             Randomly samples `num_total_logical_classes - 1` additional classes.
+        coverage_fraction : float, optional
+            Fraction of cumulative probability mass to include when sampling.
+            When specified (and < 1.0), only logical errors whose cumulative
+            probability (sorted by likelihood) is <= coverage_fraction are
+            eligible for sampling. Must be in (0, 1]. If 1.0 or None, samples
+            uniformly from all classes. Requires `logical_error_distribution`
+            when < 1.0. Defaults to None.
+        logical_error_distribution : 1D numpy array of float, optional
+            Distribution over logical errors with shape (2^k,). Index i
+            corresponds to logical error with bit pattern i = sum(b_j * 2^j).
+            Index 0 represents no error (identity). Required when
+            `coverage_fraction` is specified and < 1.0. Defaults to None.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
 
@@ -271,6 +285,33 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 "but the number of logical classes is too large."
             )
 
+        # Check if coverage-restricted sampling should be used
+        use_coverage_restriction = (
+            coverage_fraction is not None and coverage_fraction < 1.0
+        )
+
+        if use_coverage_restriction:
+            # Validate coverage_fraction
+            if coverage_fraction <= 0:
+                raise ValueError(
+                    f"coverage_fraction must be in (0, 1], got {coverage_fraction}"
+                )
+            if logical_error_distribution is None:
+                raise ValueError(
+                    "logical_error_distribution must be provided when "
+                    "coverage_fraction < 1.0 for 'random' method."
+                )
+
+            # Use coverage-restricted sampling via error distribution
+            return self._sample_coverage_restricted_logical_classes(
+                best_logical_class=excluded_logical_class,
+                logical_error_distribution=logical_error_distribution,
+                num_classes_to_explore=num_total_logical_classes,
+                coverage_fraction=coverage_fraction,
+                verbose=verbose,
+            )
+
+        # Original uniform random sampling path
         # Integer representation where bit i corresponds to excluded_logical_class[i]
         if num_observables <= 64:
             # Vectorized path (fast)
@@ -334,6 +375,120 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             )
 
         return sampled_logical_classes
+
+    def _sample_coverage_restricted_logical_classes(
+        self,
+        best_logical_class: np.ndarray,
+        logical_error_distribution: np.ndarray,
+        num_classes_to_explore: int,
+        coverage_fraction: float,
+        verbose: bool = False,
+    ) -> List[np.ndarray]:
+        """
+        Sample logical classes uniformly from errors within a coverage fraction.
+
+        Restricts sampling to the most likely logical errors whose cumulative
+        probability is <= coverage_fraction, then samples uniformly from that set.
+
+        Parameters
+        ----------
+        best_logical_class : 1D numpy array of bool
+            The best logical class from initial decoding.
+        logical_error_distribution : 1D numpy array of float
+            Distribution over logical errors with shape (2^k,).
+            Index i corresponds to logical error with bit pattern i = sum(b_j * 2^j).
+            Index 0 represents no error (identity).
+        num_classes_to_explore : int
+            Total number of logical classes to explore including the initial best class.
+        coverage_fraction : float
+            Fraction of cumulative probability mass to include.
+            Only errors with cumulative probability <= coverage_fraction are eligible.
+        verbose : bool, optional
+            If True, print progress information. Defaults to False.
+
+        Returns
+        -------
+        logical_classes_to_explore : list of 1D numpy array of bool
+            List of logical classes to explore (excluding the initial best class).
+        """
+        num_observables = len(best_logical_class)
+        if num_observables == 0:
+            return []
+
+        total_num_logical_classes = 1 << num_observables
+        num_additional_classes = min(
+            num_classes_to_explore - 1, total_num_logical_classes - 1
+        )
+
+        if num_additional_classes <= 0:
+            return []
+
+        # Create array of valid error indices (exclude identity at index 0)
+        valid_error_indices = np.arange(1, total_num_logical_classes)
+
+        # Get weights for valid errors
+        weights = logical_error_distribution[valid_error_indices].astype(float)
+        weight_sum = weights.sum()
+
+        if weight_sum <= 0:
+            # Fall back to uniform sampling from all errors if all weights are zero
+            if verbose:
+                print(
+                    "  Warning: All distribution weights are zero, "
+                    "falling back to uniform sampling from all classes"
+                )
+            eligible_error_indices = valid_error_indices
+        else:
+            # Sort by probability (descending)
+            sorted_order = np.argsort(weights)[::-1]
+            sorted_error_indices = valid_error_indices[sorted_order]
+            sorted_weights = weights[sorted_order]
+
+            # Normalize and compute cumulative probabilities
+            normalized_probs = sorted_weights / weight_sum
+            cumulative_probs = np.cumsum(normalized_probs)
+
+            # Select errors with cumulative probability <= coverage_fraction
+            eligible_mask = cumulative_probs <= coverage_fraction
+            # Always include at least one error (the most likely one)
+            if not np.any(eligible_mask):
+                eligible_mask[0] = True
+            eligible_error_indices = sorted_error_indices[eligible_mask]
+
+            if verbose:
+                print(
+                    f"  Coverage-restricted sampling: {len(eligible_error_indices)} "
+                    f"eligible errors (coverage_fraction={coverage_fraction})"
+                )
+
+        # Sample uniformly from eligible errors
+        num_to_sample = min(num_additional_classes, len(eligible_error_indices))
+        if num_to_sample == len(eligible_error_indices):
+            # Take all eligible errors
+            sampled_error_indices = eligible_error_indices
+        else:
+            # Uniform random sampling without replacement
+            sampled_indices = random.sample(
+                range(len(eligible_error_indices)), num_to_sample
+            )
+            sampled_error_indices = eligible_error_indices[sampled_indices]
+
+        if verbose:
+            print(
+                f"  Sampling {num_to_sample} logical errors uniformly from eligible pool "
+                f"(requested_total={num_classes_to_explore})"
+            )
+
+        # Convert error indices to logical classes by XOR with best_logical_class
+        logical_classes_to_explore = []
+        for error_idx in sampled_error_indices:
+            error_pattern = self._index_to_logical_class(
+                int(error_idx), num_observables
+            )
+            resulting_class = best_logical_class ^ error_pattern
+            logical_classes_to_explore.append(resulting_class)
+
+        return logical_classes_to_explore
 
     def _index_to_logical_class(
         self,
@@ -709,6 +864,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         num_classes_to_explore: int | None = None,
         compute_all_intermediate_gap_proxies: bool = False,
         logical_error_distribution: np.ndarray | None = None,
+        coverage_fraction: float | None = None,
         verbose: bool = False,
     ) -> Tuple[float, np.ndarray, float, Dict[int, float]]:
         """
@@ -748,7 +904,17 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             i = sum(b_j * 2^j) for j=0..k-1. Higher values indicate more probable
             errors. Required when `logical_gap_proxy_method` is 'most-likely-first',
             'weighted-random', 'most-likely-first-adaptive', or 'weighted-random-adaptive'.
-            Values are auto-normalized internally.
+            Also required when `logical_gap_proxy_method` is 'random' and
+            `coverage_fraction` is specified and < 1.0. Values are auto-normalized internally.
+        coverage_fraction : float, optional
+            Fraction of cumulative probability mass to include when sampling
+            logical classes for the 'random' gap proxy method. When specified
+            (and < 1.0), only logical errors whose cumulative probability (sorted
+            by likelihood) is <= coverage_fraction are eligible for uniform sampling.
+            Must be in (0, 1]. If 1.0 or None, samples uniformly from all classes
+            (default behavior). Requires `logical_error_distribution` when < 1.0.
+            Only used when `logical_gap_proxy_method` is 'random'.
+            Defaults to None.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
 
@@ -845,6 +1011,8 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             random_logical_classes = self._sample_random_logical_classes(
                 excluded_logical_class=original_logical_class,
                 num_total_logical_classes=num_classes_to_explore,
+                coverage_fraction=coverage_fraction,
+                logical_error_distribution=logical_error_distribution,
                 verbose=verbose,
             )
 
@@ -1391,6 +1559,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         num_classes_to_explore: int | None = None,
         compute_all_intermediate_gap_proxies: bool = False,
         logical_error_distribution: np.ndarray | None = None,
+        coverage_fraction: float | None = None,
         verbose: bool = False,
         _benchmarking: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray, bool, Dict[str, Any]]:
@@ -1436,8 +1605,19 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             i = sum(b_j * 2^j) for j=0..k-1. Higher values indicate more probable
             errors. Required when `logical_gap_proxy_method` is 'most-likely-first',
             'weighted-random', 'most-likely-first-adaptive', or 'weighted-random-adaptive'.
+            Also required when `logical_gap_proxy_method` is 'random' and
+            `coverage_fraction` is specified and < 1.0.
             Values are auto-normalized internally. Only used when compute_logical_gap_proxy
             is True. Defaults to None.
+        coverage_fraction : float, optional
+            Fraction of cumulative probability mass to include when sampling
+            logical classes for the 'random' gap proxy method. When specified
+            (and < 1.0), only logical errors whose cumulative probability (sorted
+            by likelihood) is <= coverage_fraction are eligible for uniform sampling.
+            Must be in (0, 1]. If 1.0 or None, samples uniformly from all classes
+            (default behavior). Requires `logical_error_distribution` when < 1.0.
+            Only used when `logical_gap_proxy_method` is 'random'.
+            Defaults to None.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
         _benchmarking : bool
@@ -1617,6 +1797,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 num_classes_to_explore=num_classes_to_explore,
                 compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
                 logical_error_distribution=logical_error_distribution,
+                coverage_fraction=coverage_fraction,
                 verbose=verbose,
             )
 

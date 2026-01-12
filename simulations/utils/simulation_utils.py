@@ -283,6 +283,7 @@ def bplsd_simulation_task_single(
     num_classes_to_explore: int | None = None,
     compute_all_intermediate_gap_proxies: bool = False,
     logical_error_distribution: np.ndarray | None = None,
+    coverage_fraction: float | None = None,
     include_cluster_stats: bool = True,
 ) -> Tuple[
     np.ndarray,
@@ -325,7 +326,17 @@ def bplsd_simulation_task_single(
     logical_error_distribution : 1D numpy array of float, optional
         Distribution over logical errors with shape (2^k,) where k is the number
         of observables. Required when `logical_gap_proxy_method` is 'most-likely-first'.
+        Also required when `logical_gap_proxy_method` is 'random' and
+        `coverage_fraction` is specified and < 1.0.
         Only used when compute_logical_gap_proxy is True. Defaults to None.
+    coverage_fraction : float, optional
+        Fraction of cumulative probability mass to include when sampling
+        logical classes for the 'random' gap proxy method. When specified
+        (and < 1.0), only logical errors whose cumulative probability (sorted
+        by likelihood) is <= coverage_fraction are eligible for uniform sampling.
+        Must be in (0, 1]. If 1.0 or None, samples uniformly from all classes.
+        Requires `logical_error_distribution` when < 1.0.
+        Only used when `logical_gap_proxy_method` is 'random'. Defaults to None.
     include_cluster_stats : bool, optional
         Whether to include cluster statistics. Defaults to True.
 
@@ -379,6 +390,7 @@ def bplsd_simulation_task_single(
             num_classes_to_explore=num_classes_to_explore,
             compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
             logical_error_distribution=logical_error_distribution,
+            coverage_fraction=coverage_fraction,
             include_cluster_stats=include_cluster_stats,
         )
 
@@ -464,6 +476,7 @@ def bplsd_simulation_task_parallel(
     num_classes_to_explore: int | None = None,
     compute_all_intermediate_gap_proxies: bool = False,
     logical_error_distribution: np.ndarray | None = None,
+    coverage_fraction: float | None = None,
     include_cluster_stats: bool = True,
 ) -> Tuple[pd.DataFrame, sparse.csr_array | None, sparse.csr_array, sparse.csr_array]:
     """
@@ -502,7 +515,17 @@ def bplsd_simulation_task_parallel(
     logical_error_distribution : 1D numpy array of float, optional
         Distribution over logical errors with shape (2^k,) where k is the number
         of observables. Required when `logical_gap_proxy_method` is 'most-likely-first'.
+        Also required when `logical_gap_proxy_method` is 'random' and
+        `coverage_fraction` is specified and < 1.0.
         Only used when compute_logical_gap_proxy is True. Defaults to None.
+    coverage_fraction : float, optional
+        Fraction of cumulative probability mass to include when sampling
+        logical classes for the 'random' gap proxy method. When specified
+        (and < 1.0), only logical errors whose cumulative probability (sorted
+        by likelihood) is <= coverage_fraction are eligible for uniform sampling.
+        Must be in (0, 1]. If 1.0 or None, samples uniformly from all classes.
+        Requires `logical_error_distribution` when < 1.0.
+        Only used when `logical_gap_proxy_method` is 'random'. Defaults to None.
     include_cluster_stats : bool, optional
         Whether to include cluster statistics. Defaults to True.
 
@@ -538,6 +561,7 @@ def bplsd_simulation_task_parallel(
             num_classes_to_explore=num_classes_to_explore,
             compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
             logical_error_distribution=logical_error_distribution,
+            coverage_fraction=coverage_fraction,
             include_cluster_stats=include_cluster_stats,
         )
         for chunk in chunk_sizes

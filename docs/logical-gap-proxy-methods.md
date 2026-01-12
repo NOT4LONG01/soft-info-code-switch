@@ -181,6 +181,31 @@ function RANDOM_GAP(syndrome, initial_class, k, n):
 - Unbiased: Each non-best class has equal probability of being explored
 - Weakness: May waste exploration budget on unlikely competitors
 
+#### Coverage-Restricted Random Sampling
+
+When a `coverage_fraction` parameter is specified along with `logical_error_distribution`, the random sampling can be restricted to the most likely logical errors. This combines the simplicity of uniform random sampling with the efficiency of distribution-guided selection.
+
+**Behavior**: Given `coverage_fraction = f`:
+1. Sort logical errors by probability (descending)
+2. Compute cumulative probabilities (normalized)
+3. Include only errors where cumulative probability <= f
+4. Sample uniformly from this restricted pool
+
+**Example**: With `coverage_fraction = 0.3`:
+- If errors are sorted as [E1: 20%, E2: 15%, E3: 10%, E4: 5%, ...]
+- Cumulative: [20%, 35%, 45%, 50%, ...]
+- Only E1 (cumulative 20%) is eligible for sampling
+
+**Characteristics**:
+- Focused: Concentrates on the most likely competitors
+- Configurable: `coverage_fraction` controls the trade-off between focus and diversity
+- Requires distribution: Unlike pure random, needs `logical_error_distribution`
+- Uniform within pool: Once eligible errors are selected, sampling is uniform
+
+**Edge Cases**:
+- `coverage_fraction = 1.0` or `None`: Falls back to pure random (no distribution required)
+- Very small `coverage_fraction`: May result in fewer eligible errors than requested samples; all eligible errors are explored
+
 ### Most-Likely-First
 
 **Overview**: Use a pre-computed logical error distribution to prioritize exploring classes most likely to compete with the best prediction.

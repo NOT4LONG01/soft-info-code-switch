@@ -259,6 +259,122 @@ class TestSoftOutputsBpLsdDecoder:
                 logical_gap_proxy_method="invalid_method",
             )
 
+    def test_logical_gap_proxy_random_with_coverage_fraction(self, circuit_data):
+        """Test 'random' gap proxy method with coverage_fraction."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Create a skewed distribution (first error is most likely)
+        num_classes = 1 << num_observables
+        logical_error_distribution = np.zeros(num_classes)
+        # Set weights for available classes (excluding identity at 0)
+        for i in range(1, min(num_classes, 4)):
+            logical_error_distribution[i] = 10.0 / i
+
+        random.seed(42)
+        pred, pred_bp, converge, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            logical_gap_proxy_method="random",
+            num_classes_to_explore=min(3, num_classes),
+            logical_error_distribution=logical_error_distribution,
+            coverage_fraction=0.5,
+        )
+
+        assert "gap_proxy" in soft_outputs
+        assert isinstance(soft_outputs["gap_proxy"], float)
+        assert soft_outputs["gap_proxy"] >= 0.0
+
+    def test_logical_gap_proxy_random_coverage_fraction_one_fallback(
+        self, circuit_data
+    ):
+        """Test that coverage_fraction=1.0 falls back to uniform sampling (no distribution needed)."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+
+        random.seed(42)
+        # coverage_fraction=1.0 should NOT require logical_error_distribution
+        pred, pred_bp, converge, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            logical_gap_proxy_method="random",
+            num_classes_to_explore=3,
+            coverage_fraction=1.0,
+        )
+
+        assert "gap_proxy" in soft_outputs
+
+    def test_logical_gap_proxy_random_coverage_fraction_requires_distribution(
+        self, circuit_data
+    ):
+        """Test that coverage_fraction < 1.0 requires logical_error_distribution."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+
+        with pytest.raises(
+            ValueError, match="logical_error_distribution must be provided"
+        ):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method="random",
+                num_classes_to_explore=3,
+                coverage_fraction=0.3,
+            )
+
+    def test_logical_gap_proxy_random_coverage_fraction_invalid_values(
+        self, circuit_data
+    ):
+        """Test that invalid coverage_fraction values raise errors."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+        logical_error_distribution = np.ones(1 << num_observables)
+
+        # Test coverage_fraction = 0
+        with pytest.raises(ValueError, match="coverage_fraction must be in"):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method="random",
+                num_classes_to_explore=3,
+                logical_error_distribution=logical_error_distribution,
+                coverage_fraction=0.0,
+            )
+
+        # Test negative coverage_fraction
+        with pytest.raises(ValueError, match="coverage_fraction must be in"):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method="random",
+                num_classes_to_explore=3,
+                logical_error_distribution=logical_error_distribution,
+                coverage_fraction=-0.1,
+            )
+
+    def test_logical_gap_proxy_random_coverage_fraction_small_pool(self, circuit_data):
+        """Test behavior when coverage creates smaller pool than requested."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Create a very skewed distribution where one error dominates
+        logical_error_distribution = np.zeros(1 << num_observables)
+        logical_error_distribution[1] = 100.0  # Dominates
+        if len(logical_error_distribution) > 2:
+            logical_error_distribution[2] = 0.1
+
+        random.seed(42)
+        # Request many classes but coverage is very restrictive
+        pred, pred_bp, converge, soft_outputs = decoder.decode(
+            circuit_data["syndrome"],
+            compute_logical_gap_proxy=True,
+            logical_gap_proxy_method="random",
+            num_classes_to_explore=10,
+            logical_error_distribution=logical_error_distribution,
+            coverage_fraction=0.1,  # Very restrictive
+        )
+
+        # Should still work, just with fewer samples
+        assert "gap_proxy" in soft_outputs
+
     def test_logical_gap_proxy_disabled(self, circuit_data):
         """Test that gap_proxy is not computed when disabled."""
         decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])

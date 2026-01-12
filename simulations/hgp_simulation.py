@@ -35,6 +35,7 @@ def simulate(
     num_classes_to_explore: int | None = None,
     compute_all_intermediate_gap_proxies: bool = False,
     logical_error_distribution: np.ndarray | None = None,
+    coverage_fraction: float | None = None,
     precompute_distribution_shots: int | None = None,
     include_cluster_stats: bool = True,
 ) -> None:
@@ -92,12 +93,22 @@ def simulate(
         compute_logical_gap_proxy is True. Defaults to False.
     logical_error_distribution : 1D numpy array of float, optional
         Pre-computed logical error distribution for 'most-likely-first' or
-        'weighted-random' methods. If None and method requires it, will be
-        computed automatically using `precompute_distribution_shots`.
-        Defaults to None.
+        'weighted-random' methods. Also required when `logical_gap_proxy_method`
+        is 'random' and `coverage_fraction` is specified and < 1.0.
+        If None and method requires it, will be computed automatically using
+        `precompute_distribution_shots`. Defaults to None.
+    coverage_fraction : float, optional
+        Fraction of cumulative probability mass to include when sampling
+        logical classes for the 'random' gap proxy method. When specified
+        (and < 1.0), only logical errors whose cumulative probability (sorted
+        by likelihood) is <= coverage_fraction are eligible for uniform sampling.
+        Must be in (0, 1]. If 1.0 or None, samples uniformly from all classes.
+        Requires `logical_error_distribution` when < 1.0.
+        Only used when `logical_gap_proxy_method` is 'random'. Defaults to None.
     precompute_distribution_shots : int, optional
         Number of shots to use for pre-computing logical error distribution when
         `logical_gap_proxy_method` is 'most-likely-first' or 'weighted-random'
+        or when 'random' with `coverage_fraction` < 1.0
         and no distribution is provided. Defaults to None (uses 100,000 shots).
     include_cluster_stats : bool, optional
         Whether to include cluster statistics. Defaults to True.
@@ -146,16 +157,17 @@ def simulate(
         np.save(prior_path, decoder.priors)
 
     # Pre-compute logical error distribution for methods that require it
-    if (
-        logical_gap_proxy_method
-        in (
-            "most-likely-first",
-            "weighted-random",
-            "most-likely-first-adaptive",
-            "weighted-random-adaptive",
-        )
-        and logical_error_distribution is None
-    ):
+    requires_distribution = logical_gap_proxy_method in (
+        "most-likely-first",
+        "weighted-random",
+        "most-likely-first-adaptive",
+        "weighted-random-adaptive",
+    ) or (
+        logical_gap_proxy_method == "random"
+        and coverage_fraction is not None
+        and coverage_fraction < 1.0
+    )
+    if requires_distribution and logical_error_distribution is None:
         # Store distribution in shared location (independent of gap proxy method)
         # Pattern: data/logical_error_distributions/hgp_{decoder_settings}/{code_params}.npy
         base_data_dir = os.path.dirname(data_dir)
@@ -220,6 +232,7 @@ def simulate(
             num_classes_to_explore=num_classes_to_explore,
             compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
             logical_error_distribution=logical_error_distribution,
+            coverage_fraction=coverage_fraction,
             include_cluster_stats=include_cluster_stats,
         )
 
@@ -276,6 +289,7 @@ if __name__ == "__main__":
         "random"  # None, 'nearby', 'random', 'most-likely-first', or 'weighted-random'
     )
     num_classes_to_explore = 18  # Required when method is 'random', 'most-likely-first', or 'weighted-random'
+    coverage_fraction = None  # For 'random' method: fraction of cumulative prob mass to sample from (e.g., 0.3)
     compute_all_intermediate_gap_proxies = True
     precompute_distribution_shots = (
         100_000  # Shots for pre-computing logical error distribution
@@ -288,9 +302,10 @@ if __name__ == "__main__":
             dir_name = "hgp_minsum_iter30_lsd0_raw_gap_proxy_nearby"
         elif logical_gap_proxy_method == "random":
             assert num_classes_to_explore is not None
-            dir_name = (
-                f"hgp_minsum_iter30_lsd0_raw_gap_proxy_random_{num_classes_to_explore}"
-            )
+            if coverage_fraction is not None and coverage_fraction < 1.0:
+                dir_name = f"hgp_minsum_iter30_lsd0_raw_gap_proxy_random_{num_classes_to_explore}_cov{coverage_fraction}"
+            else:
+                dir_name = f"hgp_minsum_iter30_lsd0_raw_gap_proxy_random_{num_classes_to_explore}"
         elif logical_gap_proxy_method == "most-likely-first":
             assert num_classes_to_explore is not None
             dir_name = (
@@ -333,11 +348,17 @@ if __name__ == "__main__":
     print("compute_logical_gap_proxy =", compute_logical_gap_proxy)
     print("logical_gap_proxy_method =", logical_gap_proxy_method)
     print("num_classes_to_explore =", num_classes_to_explore)
+    if logical_gap_proxy_method == "random" and coverage_fraction is not None:
+        print("coverage_fraction =", coverage_fraction)
     if logical_gap_proxy_method in (
         "most-likely-first",
         "weighted-random",
         "most-likely-first-adaptive",
         "weighted-random-adaptive",
+    ) or (
+        logical_gap_proxy_method == "random"
+        and coverage_fraction is not None
+        and coverage_fraction < 1.0
     ):
         print("precompute_distribution_shots =", precompute_distribution_shots)
 
@@ -370,6 +391,7 @@ if __name__ == "__main__":
                 include_cluster_stats=include_cluster_stats,
                 logical_gap_proxy_method=logical_gap_proxy_method,
                 num_classes_to_explore=num_classes_to_explore,
+                coverage_fraction=coverage_fraction,
                 compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
                 precompute_distribution_shots=precompute_distribution_shots,
             )
