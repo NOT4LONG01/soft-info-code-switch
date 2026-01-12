@@ -13,8 +13,8 @@ This document provides a high-level overview of logical gap proxy computation me
    - [Most-Likely-First](#most-likely-first)
    - [Weighted-Random Sampling](#weighted-random-sampling)
    - [Adaptive Methods](#adaptive-methods)
-4. [Method Comparison](#method-comparison)
-5. [Choosing a Method](#choosing-a-method)
+4. [Collecting Logical Error Distributions](#collecting-logical-error-distributions)
+5. [Summary](#summary)
 
 ---
 
@@ -65,10 +65,27 @@ For codes with many logical qubits (e.g., $k > 10$), this becomes computationall
 
 **Overview**: Explore all $2^k$ logical classes to compute the exact gap.
 
-**Algorithm**:
-1. For each logical class $c \in \{0, 1\}^k$, perform fixed-class decoding to obtain $\text{LLR}(c)$
-2. Find $\text{LLR}^{(1)}$ (minimum) and $\text{LLR}^{(2)}$ (second minimum)
-3. Return $\text{gap} = \text{LLR}^{(2)} - \text{LLR}^{(1)}$
+**Pseudocode**:
+```
+function EXHAUSTIVE_GAP(syndrome, initial_class, k):
+    // Input: syndrome s, initial best class c*, number of observables k
+    // Output: exact logical gap
+
+    explored ← empty dictionary
+    explored[initial_class] ← DECODE_FIXED_CLASS(syndrome, initial_class)
+
+    // Explore all 2^k logical classes
+    for c in {0,1}^k:
+        if c ≠ initial_class:
+            explored[c] ← DECODE_FIXED_CLASS(syndrome, c)
+
+    // Find minimum and second-minimum LLRs
+    all_llrs ← sort([llr for (llr, _) in explored.values()])
+    best_llr ← all_llrs[0]
+    second_best_llr ← all_llrs[1]
+
+    return second_best_llr - best_llr
+```
 
 **Characteristics**:
 - Exact: Returns the true logical gap
@@ -79,12 +96,42 @@ For codes with many logical qubits (e.g., $k > 10$), this becomes computationall
 
 **Overview**: Iteratively explore logical classes that differ from the current best by single bit flips (Hamming distance 1), using a breadth-first search strategy.
 
-**Algorithm**:
-1. Start with the decoder's initial prediction class $c^*$
-2. Explore all $k$ neighboring classes (flip each bit once)
-3. If any neighbor has lower LLR than $c^*$, add it to the exploration queue
-4. Repeat from the new best class until no better neighbor is found
-5. Compute gap from all explored classes
+**Pseudocode**:
+```
+function NEARBY_GAP(syndrome, initial_class, k):
+    // Input: syndrome s, initial best class c*, number of observables k
+    // Output: gap proxy from local exploration
+
+    explored ← empty dictionary
+    explored_set ← {initial_class}
+    explored[initial_class] ← DECODE_FIXED_CLASS(syndrome, initial_class)
+
+    queue ← [initial_class]
+
+    while queue is not empty:
+        current_class ← queue.pop_front()
+        current_best_llr ← min(llr for (llr, _) in explored.values())
+
+        // Explore all k neighbors (Hamming distance 1)
+        for i in 0 to k-1:
+            neighbor ← FLIP_BIT(current_class, i)
+            if neighbor not in explored_set:
+                explored_set.add(neighbor)
+                llr ← DECODE_FIXED_CLASS(syndrome, neighbor)
+                explored[neighbor] ← llr
+
+                // If better than current best, add to queue for further exploration
+                if llr < current_best_llr:
+                    queue.append(neighbor)
+                    current_best_llr ← llr
+
+    // Compute gap from all explored classes
+    all_llrs ← sort([llr for (llr, _) in explored.values()])
+    best_llr ← all_llrs[0]
+    second_best_llr ← all_llrs[1] if len(all_llrs) > 1 else best_llr
+
+    return second_best_llr - best_llr
+```
 
 **Characteristics**:
 - Adaptive: Follows the "gradient" toward lower LLR
@@ -96,11 +143,37 @@ For codes with many logical qubits (e.g., $k > 10$), this becomes computationall
 
 **Overview**: Uniformly sample a fixed number of logical classes to estimate the gap.
 
-**Algorithm**:
-1. Start with the initial best class $c^*$
-2. Uniformly sample $n-1$ additional classes (excluding $c^*$)
-3. Decode each sampled class to obtain its LLR
-4. Compute gap proxy from all $n$ explored classes
+**Pseudocode**:
+```
+function RANDOM_GAP(syndrome, initial_class, k, n):
+    // Input: syndrome s, initial best class c*, number of observables k,
+    //        total classes to explore n
+    // Output: gap proxy from uniform random sampling
+
+    explored ← empty dictionary
+    explored[initial_class] ← DECODE_FIXED_CLASS(syndrome, initial_class)
+
+    // Convert initial_class to integer representation
+    initial_int ← BITS_TO_INT(initial_class)
+
+    // Sample n-1 distinct classes uniformly (excluding initial_class)
+    sampled_ints ← SAMPLE_WITHOUT_REPLACEMENT(
+        range(0, 2^k) \ {initial_int},
+        count = min(n-1, 2^k - 1)
+    )
+
+    // Decode each sampled class
+    for class_int in sampled_ints:
+        class_bits ← INT_TO_BITS(class_int, k)
+        explored[class_bits] ← DECODE_FIXED_CLASS(syndrome, class_bits)
+
+    // Compute gap proxy
+    all_llrs ← sort([llr for (llr, _) in explored.values()])
+    best_llr ← all_llrs[0]
+    second_best_llr ← all_llrs[1] if len(all_llrs) > 1 else best_llr
+
+    return second_best_llr - best_llr
+```
 
 **Characteristics**:
 - Simple: No prior knowledge required
@@ -114,15 +187,38 @@ For codes with many logical qubits (e.g., $k > 10$), this becomes computationall
 
 **Background**: In practice, logical errors (transitions between logical classes) are not uniform. Some error patterns occur much more frequently than others. By collecting statistics on which logical errors occur most often, we can intelligently select which classes to explore.
 
-**Algorithm**:
-1. Obtain a logical error distribution $P(e)$ for each error pattern $e \in \{0, 1\}^k$
-   - Index 0 represents no error (identity)
-   - Higher values indicate more probable errors
-2. Sort non-identity error indices by probability (descending)
-3. For the top $n-1$ errors $e_1, e_2, \ldots, e_{n-1}$:
-   - Compute candidate class as $c^* \oplus e_i$ (XOR operation)
-   - Decode this class
-4. Compute gap proxy from all explored classes
+**Pseudocode**:
+```
+function MOST_LIKELY_FIRST_GAP(syndrome, initial_class, k, n, P):
+    // Input: syndrome s, initial best class c*, number of observables k,
+    //        total classes to explore n, logical error distribution P[0..2^k-1]
+    // Output: gap proxy from distribution-guided deterministic selection
+
+    explored ← empty dictionary
+    explored[initial_class] ← DECODE_FIXED_CLASS(syndrome, initial_class)
+
+    // Sort error indices by distribution probability (descending)
+    // Exclude index 0 (identity/no error)
+    sorted_error_indices ← ARGSORT_DESCENDING(P)
+    sorted_error_indices ← FILTER(sorted_error_indices, λi. i ≠ 0)
+
+    // Select top n-1 errors and explore corresponding classes
+    num_to_explore ← min(n-1, 2^k - 1)
+    for i in 0 to num_to_explore - 1:
+        error_idx ← sorted_error_indices[i]
+        error_pattern ← INT_TO_BITS(error_idx, k)
+
+        // Compute candidate class: initial_class XOR error_pattern
+        candidate_class ← initial_class ⊕ error_pattern
+        explored[candidate_class] ← DECODE_FIXED_CLASS(syndrome, candidate_class)
+
+    // Compute gap proxy
+    all_llrs ← sort([llr for (llr, _) in explored.values()])
+    best_llr ← all_llrs[0]
+    second_best_llr ← all_llrs[1] if len(all_llrs) > 1 else best_llr
+
+    return second_best_llr - best_llr
+```
 
 **Key Insight**: If error pattern $e$ frequently causes logical failures, then class $c^* \oplus e$ is likely to be a strong competitor to $c^*$. By exploring these classes first, we maximize the probability of finding the true second-best class within a limited exploration budget.
 
@@ -136,13 +232,44 @@ For codes with many logical qubits (e.g., $k > 10$), this becomes computationall
 
 **Overview**: Sample logical classes with probabilities proportional to the logical error distribution, combining the benefits of random exploration with distribution-guided selection.
 
-**Algorithm**:
-1. Obtain a logical error distribution $P(e)$
-2. Sample $n-1$ error indices without replacement, with probability proportional to $P(e)$ (excluding identity)
-3. For each sampled error $e_i$:
-   - Compute candidate class as $c^* \oplus e_i$
-   - Decode this class
-4. Compute gap proxy from all explored classes
+**Pseudocode**:
+```
+function WEIGHTED_RANDOM_GAP(syndrome, initial_class, k, n, P):
+    // Input: syndrome s, initial best class c*, number of observables k,
+    //        total classes to explore n, logical error distribution P[0..2^k-1]
+    // Output: gap proxy from distribution-guided stochastic sampling
+
+    explored ← empty dictionary
+    explored[initial_class] ← DECODE_FIXED_CLASS(syndrome, initial_class)
+
+    // Prepare valid error indices (exclude identity at index 0)
+    valid_indices ← [1, 2, ..., 2^k - 1]
+
+    // Normalize weights to probabilities
+    weights ← [P[i] for i in valid_indices]
+    probabilities ← weights / sum(weights)
+
+    // Sample n-1 errors without replacement, weighted by probabilities
+    num_to_sample ← min(n-1, 2^k - 1)
+    sampled_error_indices ← WEIGHTED_SAMPLE_WITHOUT_REPLACEMENT(
+        valid_indices, probabilities, count = num_to_sample
+    )
+
+    // Explore corresponding classes
+    for error_idx in sampled_error_indices:
+        error_pattern ← INT_TO_BITS(error_idx, k)
+
+        // Compute candidate class: initial_class XOR error_pattern
+        candidate_class ← initial_class ⊕ error_pattern
+        explored[candidate_class] ← DECODE_FIXED_CLASS(syndrome, candidate_class)
+
+    // Compute gap proxy
+    all_llrs ← sort([llr for (llr, _) in explored.values()])
+    best_llr ← all_llrs[0]
+    second_best_llr ← all_llrs[1] if len(all_llrs) > 1 else best_llr
+
+    return second_best_llr - best_llr
+```
 
 **Comparison with Other Methods**:
 
@@ -166,16 +293,125 @@ For codes with many logical qubits (e.g., $k > 10$), this becomes computationall
 - Logical errors are typically correlated with the current decoding state
 - Errors relative to the new best class $c'$ are more informative than errors relative to the original $c^*$
 
-**Algorithm (Adaptive)**:
-1. Initialize: Set current best class $c_{\text{best}} = c^*$, explored set $\mathcal{E} = \{c^*\}$
-2. While $|\mathcal{E}| < n$:
-   - Select next candidate based on $c_{\text{best}}$ (not original $c^*$):
-     - **MLF-Adaptive**: Walk through sorted errors, find first $e$ where $c_{\text{best}} \oplus e \notin \mathcal{E}$
-     - **WR-Adaptive**: Sample error $e$ from distribution, reject if $c_{\text{best}} \oplus e \in \mathcal{E}$
-   - Decode the candidate class $c'$
-   - Add $c'$ to $\mathcal{E}$
-   - If $\text{LLR}(c') < \text{LLR}(c_{\text{best}})$: Update $c_{\text{best}} = c'$
-3. Compute gap proxy from all explored classes
+#### Most-Likely-First-Adaptive
+
+**Pseudocode**:
+```
+function MLF_ADAPTIVE_GAP(syndrome, initial_class, k, n, P):
+    // Input: syndrome s, initial best class c*, number of observables k,
+    //        total classes to explore n, logical error distribution P[0..2^k-1]
+    // Output: gap proxy from adaptive distribution-guided selection
+
+    explored ← empty dictionary
+    explored_set ← {initial_class}
+    initial_llr ← DECODE_FIXED_CLASS(syndrome, initial_class)
+    explored[initial_class] ← initial_llr
+
+    // Pre-sort error indices by distribution probability (descending)
+    sorted_error_indices ← ARGSORT_DESCENDING(P)
+
+    // Track current best class and its LLR
+    current_best_class ← initial_class
+    current_best_llr ← initial_llr
+
+    // Cursor for efficient scanning (reset when best class changes)
+    search_cursor ← 0
+
+    while |explored_set| < n:
+        // Find next unexplored class by walking through sorted errors
+        found ← false
+        while search_cursor < |sorted_error_indices| and not found:
+            error_idx ← sorted_error_indices[search_cursor]
+            search_cursor ← search_cursor + 1
+
+            if error_idx = 0:  // Skip identity
+                continue
+
+            error_pattern ← INT_TO_BITS(error_idx, k)
+            candidate_class ← current_best_class ⊕ error_pattern
+
+            if candidate_class not in explored_set:
+                found ← true
+
+        if not found:
+            break  // No more unexplored classes available
+
+        // Decode the candidate class
+        llr ← DECODE_FIXED_CLASS(syndrome, candidate_class)
+        explored[candidate_class] ← llr
+        explored_set.add(candidate_class)
+
+        // Update current best if this class is better
+        if llr < current_best_llr:
+            current_best_class ← candidate_class
+            current_best_llr ← llr
+            search_cursor ← 0  // Reset cursor when best class changes
+
+    // Compute gap proxy
+    all_llrs ← sort([llr for (llr, _) in explored.values()])
+    best_llr ← all_llrs[0]
+    second_best_llr ← all_llrs[1] if len(all_llrs) > 1 else best_llr
+
+    return second_best_llr - best_llr
+```
+
+#### Weighted-Random-Adaptive
+
+**Pseudocode**:
+```
+function WR_ADAPTIVE_GAP(syndrome, initial_class, k, n, P):
+    // Input: syndrome s, initial best class c*, number of observables k,
+    //        total classes to explore n, logical error distribution P[0..2^k-1]
+    // Output: gap proxy from adaptive weighted random sampling
+
+    explored ← empty dictionary
+    explored_set ← {initial_class}
+    initial_llr ← DECODE_FIXED_CLASS(syndrome, initial_class)
+    explored[initial_class] ← initial_llr
+
+    // Prepare valid error indices and normalized probabilities
+    valid_indices ← [1, 2, ..., 2^k - 1]
+    weights ← [P[i] for i in valid_indices]
+    probabilities ← weights / sum(weights)
+
+    // Track current best class and its LLR
+    current_best_class ← initial_class
+    current_best_llr ← initial_llr
+
+    max_retries ← 1000
+
+    while |explored_set| < n:
+        // Sample next unexplored class using rejection sampling
+        found ← false
+        for retry in 1 to max_retries:
+            error_idx ← WEIGHTED_SAMPLE(valid_indices, probabilities)
+            error_pattern ← INT_TO_BITS(error_idx, k)
+            candidate_class ← current_best_class ⊕ error_pattern
+
+            if candidate_class not in explored_set:
+                found ← true
+                break
+
+        if not found:
+            break  // Failed to find unexplored class after max retries
+
+        // Decode the candidate class
+        llr ← DECODE_FIXED_CLASS(syndrome, candidate_class)
+        explored[candidate_class] ← llr
+        explored_set.add(candidate_class)
+
+        // Update current best if this class is better
+        if llr < current_best_llr:
+            current_best_class ← candidate_class
+            current_best_llr ← llr
+
+    // Compute gap proxy
+    all_llrs ← sort([llr for (llr, _) in explored.values()])
+    best_llr ← all_llrs[0]
+    second_best_llr ← all_llrs[1] if len(all_llrs) > 1 else best_llr
+
+    return second_best_llr - best_llr
+```
 
 **Key Property**: The explored set $\mathcal{E}$ is never reset—only the selection offset changes when $c_{\text{best}}$ updates. This ensures exactly $n$ unique classes are explored.
 
