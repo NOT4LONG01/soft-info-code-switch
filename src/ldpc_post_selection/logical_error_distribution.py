@@ -215,7 +215,7 @@ def collect_logical_error_distribution(
 
     # Process batches
     obs_matrix_T = decoder.obs_matrix.T
-
+ 
     for current_batch_size in batch_sizes:
         # Sample detector outcomes and true observables
         det, obs = sampler.sample(current_batch_size, separate_observables=True)

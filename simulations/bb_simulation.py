@@ -250,7 +250,7 @@ if __name__ == "__main__":
     total_shots = round(1e6)
     compute_logical_gap_proxy = True
     include_cluster_stats = False
-    logical_gap_proxy_method = "weighted-random"  # None, 'nearby', 'random', 'most-likely-first', or 'weighted-random'
+    logical_gap_proxy_method = "weighted-random-adaptive"  # None, 'nearby', 'random', 'most-likely-first', or 'weighted-random'
     num_classes_to_explore = 24  # Required when method is 'random', 'most-likely-first', or 'weighted-random'
     compute_all_intermediate_gap_proxies = True
     precompute_distribution_shots = 1000 * 2**12

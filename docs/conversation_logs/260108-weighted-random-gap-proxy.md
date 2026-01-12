@@ -127,4 +127,4 @@ All 29 decoder tests pass. The full test suite shows 66 passed (2 pre-existing f
 - **Related commits**:
   - `1e84804` (most-likely-first method)
   - `8da277f` (method selector consolidation)
-- **Documentation**: `docs/most-likely-first-method.md` (related method documentation)
+- **Documentation**: `docs/conversation_logs/most-likely-first-method.md` (related method documentation)
