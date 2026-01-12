@@ -39,17 +39,29 @@ from simulations.utils.build_circuit import build_BB_circuit
 
 def select_representative_errors(
     distribution: np.ndarray,
-    n_samples: int = 10,
+    n_samples: int | None = None,
+    rank_range: tuple[int, int, int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Select representative errors uniformly spaced across the sorted distribution.
+    Select representative errors from the sorted distribution.
+
+    Selection can be done either by:
+    1. Uniform spacing across the distribution (using n_samples)
+    2. Range-based selection (using rank_range as [start, end, step])
 
     Parameters
     ----------
     distribution : 1D numpy array of int
         Logical error distribution where index 0 is correct decoding.
-    n_samples : int
-        Number of representative errors to select.
+    n_samples : int, optional
+        Number of representative errors to select (uniform spacing).
+        Mutually exclusive with rank_range.
+    rank_range : tuple of (start, end, step), optional
+        Range specification for rank selection, similar to Python's range().
+        - start: Starting rank (inclusive, 0 = most likely error)
+        - end: Ending rank (exclusive)
+        - step: Step size between selected ranks
+        Mutually exclusive with n_samples.
 
     Returns
     -------
@@ -60,6 +72,11 @@ def select_representative_errors(
     selected_probs : 1D numpy array of float
         Probability of each selected error (among errors only, excluding correct).
     """
+    if n_samples is None and rank_range is None:
+        raise ValueError("Either n_samples or rank_range must be provided")
+    if n_samples is not None and rank_range is not None:
+        raise ValueError("Only one of n_samples or rank_range should be provided")
+
     # Exclude index 0 (correct decoding)
     error_dist = distribution[1:]
     error_indices = np.arange(1, len(distribution))
@@ -77,9 +94,18 @@ def select_representative_errors(
         else sorted_counts.astype(float)
     )
 
-    # Select uniformly spaced ranks
+    # Determine rank positions to select
     n_errors = len(sorted_indices)
-    rank_positions = np.linspace(0, n_errors - 1, n_samples, dtype=int)
+
+    if n_samples is not None:
+        # Uniform spacing
+        rank_positions = np.linspace(0, n_errors - 1, n_samples, dtype=int)
+    else:
+        # Range-based selection
+        start, end, step = rank_range
+        # Clamp end to valid range
+        end = min(end, n_errors)
+        rank_positions = np.arange(start, end, step)
 
     selected_indices = sorted_indices[rank_positions]
     selected_ranks = rank_positions
@@ -180,8 +206,9 @@ def run_correlation_analysis(
     n_qubits: int,
     p: float,
     n_shots: int,
-    n_representative_errors: int,
     decoder_params: dict,
+    n_representative_errors: int | None = None,
+    rank_range: tuple[int, int, int] | None = None,
     distribution_path: Path | None = None,
     seed: int = 42,
     n_jobs: int = 1,
@@ -198,10 +225,14 @@ def run_correlation_analysis(
         Physical error rate.
     n_shots : int
         Number of shots to analyze.
-    n_representative_errors : int
-        Number of representative errors to sample from distribution.
     decoder_params : dict
         Parameters for the BP+LSD decoder.
+    n_representative_errors : int, optional
+        Number of representative errors to sample from distribution (uniform spacing).
+        Mutually exclusive with rank_range.
+    rank_range : tuple of (start, end, step), optional
+        Range specification for rank selection, similar to range().
+        Mutually exclusive with n_representative_errors.
     distribution_path : Path, optional
         Path to pre-computed distribution. If None, computes fresh.
     seed : int
@@ -269,11 +300,16 @@ def run_correlation_analysis(
 
     # Select representative errors
     selected_indices, selected_ranks, selected_probs = select_representative_errors(
-        distribution, n_samples=n_representative_errors
+        distribution, n_samples=n_representative_errors, rank_range=rank_range
     )
+    n_selected = len(selected_ranks)
 
     if verbose:
-        print(f"\nSelected {n_representative_errors} representative errors:")
+        print(f"\nSelected {n_selected} representative errors:")
+        if rank_range is not None:
+            print(
+                f"  Rank range: [{rank_range[0]}, {rank_range[1]}) step {rank_range[2]}"
+            )
         print(f"  Ranks: {selected_ranks.tolist()}")
         print(f"  Indices: {selected_indices.tolist()}")
 
@@ -303,7 +339,7 @@ def run_correlation_analysis(
         # Sequential processing with progress bar
         if verbose:
             print(
-                f"Running analysis sequentially ({n_shots:,} shots x {n_representative_errors + 1} decodes each)..."
+                f"Running analysis sequentially ({n_shots:,} shots x {n_selected + 1} decodes each)..."
             )
 
         # Create decoder
@@ -362,7 +398,7 @@ def run_correlation_analysis(
         # Parallel processing
         if verbose:
             print(
-                f"Running analysis in parallel ({actual_n_jobs} jobs, {n_shots:,} shots x {n_representative_errors + 1} decodes each)..."
+                f"Running analysis in parallel ({actual_n_jobs} jobs, {n_shots:,} shots x {n_selected + 1} decodes each)..."
             )
 
         # Calculate chunk sizes for each job
@@ -405,7 +441,8 @@ def run_correlation_analysis(
         "distance": distance,
         "p": p,
         "n_shots": n_shots,
-        "n_representative_errors": n_representative_errors,
+        "n_selected_errors": n_selected,
+        "rank_range": list(rank_range) if rank_range else None,
         "num_observables": num_observables,
         "logical_error_rate": logical_error_rate,
         "distribution_shots": int(total_shots_dist),
@@ -458,12 +495,25 @@ def main():
         default=10000,
         help="Number of shots to analyze",
     )
-    parser.add_argument(
+
+    # Error selection - either n-errors OR rank range
+    error_selection = parser.add_mutually_exclusive_group()
+    error_selection.add_argument(
         "--n-errors",
         type=int,
-        default=10,
-        help="Number of representative errors to sample",
+        default=None,
+        help="Number of representative errors to sample (uniform spacing across distribution)",
     )
+    error_selection.add_argument(
+        "--rank-range",
+        type=int,
+        nargs=3,
+        metavar=("START", "END", "STEP"),
+        default=None,
+        help="Select errors by rank range [start, end, step], similar to range(). "
+        "E.g., '--rank-range 0 100 10' selects ranks 0, 10, 20, ..., 90",
+    )
+
     parser.add_argument(
         "--seed",
         type=int,
@@ -551,13 +601,22 @@ def main():
         )
         dist_path = dist_dir / f"n{args.n_qubits}_T{T}_p{args.p}.npy"
 
+    # Determine error selection method
+    n_errors = args.n_errors
+    rank_range = tuple(args.rank_range) if args.rank_range else None
+
+    # Default to 10 errors if neither specified
+    if n_errors is None and rank_range is None:
+        n_errors = 10
+
     # Run analysis
     results_df, metadata = run_correlation_analysis(
         n_qubits=args.n_qubits,
         p=args.p,
         n_shots=args.n_shots,
-        n_representative_errors=args.n_errors,
         decoder_params=decoder_params,
+        n_representative_errors=n_errors,
+        rank_range=rank_range,
         distribution_path=dist_path,
         seed=args.seed,
         n_jobs=args.n_jobs,
