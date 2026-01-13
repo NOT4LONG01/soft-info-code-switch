@@ -1007,8 +1007,15 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         logical_error_distribution: np.ndarray | None = None,
         coverage_fraction: float | None = None,
         num_procs_for_gap: int = 1,
+        return_explored_classes: bool = False,
         verbose: bool = False,
-    ) -> Tuple[float, np.ndarray, float, Dict[int, float]]:
+    ) -> Tuple[
+        float,
+        np.ndarray,
+        float,
+        Dict[int, float],
+        Dict[Tuple[bool, ...], Tuple[float, np.ndarray]] | None,
+    ]:
         """
         Compute logical gap proxy by exploring different logical classes iteratively.
 
@@ -1063,6 +1070,10 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             'random', 'most-likely-first', 'weighted-random'. Set to -1 to use
             all available CPUs. Raises ValueError for 'nearby' and adaptive methods
             when > 1. Defaults to 1 (sequential).
+        return_explored_classes : bool, optional
+            If True, return the explored_classes dictionary containing all explored
+            logical classes and their results. Useful for detailed analysis of the
+            decoding results across all logical classes. Defaults to False.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
 
@@ -1079,6 +1090,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             corresponding gap proxy. Only populated when `compute_all_intermediate_gap_proxies`
             is True and `logical_gap_proxy_method` is 'random', 'most-likely-first',
             'weighted-random', 'most-likely-first-adaptive', or 'weighted-random-adaptive'.
+        explored_classes : dict or None
+            Dictionary mapping logical class tuples to (pred_llr, pred_pattern) tuples.
+            Only returned (non-None) when `return_explored_classes` is True.
+            Keys are tuples of bool representing the logical class.
+            Values are tuples of (float, numpy array) for (pred_llr, pred_pattern).
         """
         # Validate num_procs_for_gap for methods that require sequential execution
         if num_procs_for_gap != 1 and logical_gap_proxy_method in (
@@ -1098,7 +1114,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         if self.obs_matrix is None:
             if verbose:
                 print("  No observables, returning original results")
-            return 0.0, pred, original_pred_llr, {}
+            return 0.0, pred, original_pred_llr, {}, None
 
         # Validate logical_gap_proxy_method
         if logical_gap_proxy_method is not None and logical_gap_proxy_method not in (
@@ -1669,7 +1685,13 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             print(f"  Gap proxy: {gap_proxy:.4f}")
             print(f"  Best logical class: {np.array(best_logical_class_tuple)}")
 
-        return gap_proxy, best_pred, best_pred_llr, gap_proxies_by_num_classes
+        return (
+            gap_proxy,
+            best_pred,
+            best_pred_llr,
+            gap_proxies_by_num_classes,
+            explored_classes if return_explored_classes else None,
+        )
 
     def _hash_matrix_and_priors(self, H_matrix: csc_matrix, priors: np.ndarray) -> str:
         """
@@ -1832,6 +1854,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         logical_error_distribution: np.ndarray | None = None,
         coverage_fraction: float | None = None,
         num_procs_for_gap: int = 1,
+        return_explored_classes: bool = False,
         verbose: bool = False,
         _benchmarking: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray, bool, Dict[str, Any]]:
@@ -1897,6 +1920,12 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             all available CPUs. Raises ValueError for 'nearby' and adaptive methods
             when > 1. Only used when compute_logical_gap_proxy is True.
             Defaults to 1 (sequential).
+        return_explored_classes : bool, optional
+            If True and compute_logical_gap_proxy is True, include the explored_classes
+            dictionary in soft_outputs. This dictionary maps logical class tuples to
+            (pred_llr, pred_pattern) tuples for all explored classes, enabling detailed
+            analysis of the decoding results across all logical classes.
+            Only used when compute_logical_gap_proxy is True. Defaults to False.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
         _benchmarking : bool
@@ -1925,6 +1954,9 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
               (only if compute_all_intermediate_gap_proxies=True and logical_gap_proxy_method
               is 'random', 'most-likely-first', 'weighted-random', 'most-likely-first-adaptive',
               or 'weighted-random-adaptive')
+            - explored_classes (dict): Dictionary mapping logical class tuples to
+              (pred_llr, pred_pattern) tuples (only if return_explored_classes=True
+              and compute_logical_gap_proxy=True)
             - cluster_size_norm_frac_{order} (float): Norm fraction of cluster sizes for each order
             - cluster_llr_norm_frac_{order} (float): Norm fraction of cluster LLRs for each order
         """
@@ -2068,6 +2100,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 best_pred,
                 best_pred_llr,
                 gap_proxies_by_num_classes,
+                explored_classes_result,
             ) = self._compute_logical_gap_proxy(
                 detector_outcomes,
                 pred,
@@ -2078,6 +2111,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 logical_error_distribution=logical_error_distribution,
                 coverage_fraction=coverage_fraction,
                 num_procs_for_gap=num_procs_for_gap,
+                return_explored_classes=return_explored_classes,
                 verbose=verbose,
             )
 
@@ -2091,6 +2125,8 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             if compute_all_intermediate_gap_proxies and gap_proxies_by_num_classes:
                 for num_classes, gap in sorted(gap_proxies_by_num_classes.items()):
                     soft_outputs[f"gap_proxy_{num_classes}"] = gap
+            if explored_classes_result is not None:
+                soft_outputs["explored_classes"] = explored_classes_result
 
             # Update prediction and related soft outputs if a better one was found
             if best_pred_llr < soft_outputs["pred_llr"]:

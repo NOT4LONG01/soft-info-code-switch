@@ -4,14 +4,21 @@ Script to analyze correlation between logical error distribution and fixed-class
 
 This script runs the computationally intensive part of the analysis:
 1. Loads/computes logical error distribution
-2. Selects representative errors across the distribution
+2. Selects representative errors across the distribution (sampled mode)
+   OR explores ALL logical classes (exhaustive mode)
 3. For each shot: standard decode + fixed-class decodes for selected errors
 4. Saves results to a parquet file for analysis in notebook
 
 Usage:
     python run_distribution_correlation_analysis.py --help
+
+    # Sampled mode (select representative errors)
     python run_distribution_correlation_analysis.py --n-shots 10000 --output results.parquet
     python run_distribution_correlation_analysis.py --n-shots 50000 --n-errors 20 --p 0.003
+
+    # Exhaustive mode (explore ALL logical classes with parallelization)
+    python run_distribution_correlation_analysis.py --exhaustive --n-shots 10 \\
+        --num-procs-for-gap 126 --output exhaustive_results.parquet
 """
 
 import argparse
@@ -32,6 +39,7 @@ sys.path.insert(0, str(project_root / "simulations"))
 from ldpc_post_selection.bplsd_decoder import SoftOutputsBpLsdDecoder
 from ldpc_post_selection.logical_error_distribution import (
     index_to_logical_class,
+    logical_class_to_index,
     collect_logical_error_distribution_fast,
 )
 from simulations.utils.build_circuit import build_BB_circuit
@@ -457,6 +465,229 @@ def run_correlation_analysis(
     return results_df, metadata
 
 
+def run_exhaustive_correlation_analysis(
+    n_qubits: int,
+    p: float,
+    n_shots: int,
+    decoder_params: dict,
+    distribution_path: Path | None = None,
+    seed: int = 42,
+    num_procs_for_gap: int = 126,
+    output_path: Path | None = None,
+    verbose: bool = True,
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Run exhaustive correlation analysis exploring ALL logical classes.
+
+    This function uses the decoder's exhaustive gap proxy computation with
+    parallelization to decode all 2^k logical classes for each shot, enabling
+    complete correlation analysis between the logical error distribution and LLRs.
+
+    Parameters
+    ----------
+    n_qubits : int
+        Number of physical qubits (determines BB code variant).
+    p : float
+        Physical error rate.
+    n_shots : int
+        Number of shots to analyze.
+    decoder_params : dict
+        Parameters for the BP+LSD decoder.
+    distribution_path : Path, optional
+        Path to pre-computed distribution. If None, computes fresh.
+    seed : int
+        Random seed for reproducibility.
+    num_procs_for_gap : int
+        Number of parallel processes for exhaustive gap computation.
+        Defaults to 126.
+    output_path : Path, optional
+        Path to save results incrementally. If provided, results are appended
+        after each shot for data safety.
+    verbose : bool
+        Whether to print progress information.
+
+    Returns
+    -------
+    results_df : pd.DataFrame
+        DataFrame with columns: shot_id, error_rank, error_index, error_prob,
+        fixed_llr, best_llr, llr_delta
+    metadata : dict
+        Metadata about the analysis run.
+    """
+    # Get code distance from n_qubits
+    distance_map = {72: 6, 90: 10, 108: 10, 144: 12, 288: 18, 360: 24, 756: 34}
+    if n_qubits not in distance_map:
+        raise ValueError(
+            f"Unsupported n_qubits: {n_qubits}. Must be one of {list(distance_map.keys())}"
+        )
+    distance = distance_map[n_qubits]
+    T = distance  # measurement rounds = distance
+
+    if verbose:
+        print(f"Building [[{n_qubits}, 12, {distance}]] BB circuit with p={p}...")
+    circuit = build_BB_circuit(n=n_qubits, T=T, p=p)
+    num_observables = circuit.num_observables
+    total_logical_classes = 1 << num_observables
+
+    if verbose:
+        print(
+            f"Circuit: {circuit.num_detectors} detectors, {num_observables} observables"
+        )
+        print(f"Total logical classes: {total_logical_classes}")
+
+    # Load or compute distribution
+    if distribution_path and distribution_path.exists():
+        if verbose:
+            print(f"Loading distribution from {distribution_path}...")
+        distribution = np.load(distribution_path)
+    else:
+        if verbose:
+            print("Computing fresh distribution (100k shots)...")
+        distribution, _ = collect_logical_error_distribution_fast(
+            circuit=circuit,
+            shots=100_000,
+            decoder_params=decoder_params,
+            seed=seed,
+        )
+        if distribution_path:
+            distribution_path.parent.mkdir(parents=True, exist_ok=True)
+            np.save(distribution_path, distribution)
+            if verbose:
+                print(f"Distribution saved to {distribution_path}")
+
+    # Distribution statistics
+    total_shots_dist = distribution.sum()
+    logical_error_rate = 1 - distribution[0] / total_shots_dist
+
+    if verbose:
+        print(
+            f"Distribution: {total_shots_dist:,} shots, {logical_error_rate:.4%} logical error rate"
+        )
+
+    # Build rank mappings from distribution (excluding index 0 = correct decoding)
+    error_dist = distribution[1:]  # Exclude index 0
+    error_indices = np.arange(1, len(distribution))
+    sorted_order = np.argsort(error_dist)[::-1]  # Descending by count
+    sorted_indices = error_indices[sorted_order]
+    sorted_counts = error_dist[sorted_order]
+    total_errors = error_dist.sum()
+    sorted_probs = (
+        sorted_counts / total_errors
+        if total_errors > 0
+        else sorted_counts.astype(float)
+    )
+
+    # Create mappings: error_index -> rank, rank -> prob
+    index_to_rank = {idx: rank for rank, idx in enumerate(sorted_indices)}
+    rank_to_prob = {rank: prob for rank, prob in enumerate(sorted_probs)}
+
+    if verbose:
+        print(f"\nWill analyze {n_shots} shots with exhaustive exploration")
+        print(f"  Each shot will explore {total_logical_classes - 1} alternate classes")
+        print(f"  Using {num_procs_for_gap} parallel processes")
+
+    # Create decoder
+    decoder = SoftOutputsBpLsdDecoder(circuit=circuit, **decoder_params)
+    obs_matrix_T = decoder.obs_matrix.T
+
+    # Prepare sampler
+    sampler = circuit.compile_detector_sampler(seed=seed + 1000)
+
+    # Sample all detector outcomes at once
+    if verbose:
+        print(f"\nSampling {n_shots:,} detector outcomes...")
+    det_all, _ = sampler.sample(n_shots, separate_observables=True)
+
+    # Process shots
+    all_results = []
+    iterator = (
+        tqdm(range(n_shots), desc="Processing shots") if verbose else range(n_shots)
+    )
+
+    # Prepare output file for incremental saving
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Remove existing file if present (fresh start)
+        if output_path.exists():
+            output_path.unlink()
+
+    for shot_idx in iterator:
+        det = det_all[shot_idx]
+
+        # Decode with exhaustive gap proxy (parallelized)
+        pred, _, _, soft_outputs = decoder.decode(
+            det,
+            include_cluster_stats=False,
+            compute_logical_gap_proxy=True,
+            logical_gap_proxy_method=None,  # Exhaustive
+            num_procs_for_gap=num_procs_for_gap,
+            return_explored_classes=True,
+            verbose=False,
+        )
+
+        # Get original logical class from the prediction
+        original_logical_class = ((pred.astype(np.uint8) @ obs_matrix_T) % 2).astype(
+            bool
+        )
+        best_llr = soft_outputs["pred_llr"]
+        explored_classes = soft_outputs["explored_classes"]
+
+        # Build records for this shot
+        shot_records = []
+        for lc_tuple, (llr, _) in explored_classes.items():
+            # Compute error pattern: logical_class XOR original_logical_class
+            error_pattern = np.array(lc_tuple, dtype=bool) ^ original_logical_class
+            error_index = logical_class_to_index(error_pattern)
+
+            # Skip index 0 (which corresponds to the original class itself)
+            if error_index == 0:
+                continue
+
+            error_rank = index_to_rank.get(error_index, len(index_to_rank))
+            error_prob = rank_to_prob.get(error_rank, 0.0)
+
+            shot_records.append(
+                {
+                    "shot_id": shot_idx,
+                    "error_rank": int(error_rank),
+                    "error_index": int(error_index),
+                    "error_prob": float(error_prob),
+                    "fixed_llr": float(llr),
+                    "best_llr": float(best_llr),
+                    "llr_delta": float(llr - best_llr),
+                }
+            )
+
+        all_results.extend(shot_records)
+
+        # Incremental save
+        if output_path:
+            pd.DataFrame(shot_records).to_csv(
+                output_path, mode="a", header=(shot_idx == 0), index=False
+            )
+
+    # Create DataFrame
+    results_df = pd.DataFrame(all_results)
+
+    # Metadata
+    metadata = {
+        "n_qubits": n_qubits,
+        "distance": distance,
+        "p": p,
+        "n_shots": n_shots,
+        "exhaustive": True,
+        "total_logical_classes": total_logical_classes,
+        "num_observables": num_observables,
+        "logical_error_rate": logical_error_rate,
+        "distribution_shots": int(total_shots_dist),
+        "decoder_params": decoder_params,
+        "seed": seed,
+        "num_procs_for_gap": num_procs_for_gap,
+    }
+
+    return results_df, metadata
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Analyze correlation between logical error distribution and fixed-class decoding LLRs.",
@@ -514,6 +745,19 @@ def main():
         "E.g., '--rank-range 0 100 10' selects ranks 0, 10, 20, ..., 90",
     )
 
+    # Exhaustive mode (mutually exclusive with error selection)
+    parser.add_argument(
+        "--exhaustive",
+        action="store_true",
+        help="Use exhaustive exploration of ALL logical classes (overrides error selection)",
+    )
+    parser.add_argument(
+        "--num-procs-for-gap",
+        type=int,
+        default=126,
+        help="Number of parallel processes for exhaustive gap computation",
+    )
+
     parser.add_argument(
         "--seed",
         type=int,
@@ -525,7 +769,7 @@ def main():
         "-j",
         type=int,
         default=1,
-        help="Number of parallel jobs (-1 for all CPUs)",
+        help="Number of parallel jobs for sampled analysis (-1 for all CPUs)",
     )
 
     # Distribution path
@@ -601,34 +845,56 @@ def main():
         )
         dist_path = dist_dir / f"n{args.n_qubits}_T{T}_p{args.p}.npy"
 
-    # Determine error selection method
-    n_errors = args.n_errors
-    rank_range = tuple(args.rank_range) if args.rank_range else None
-
-    # Default to 10 errors if neither specified
-    if n_errors is None and rank_range is None:
-        n_errors = 10
-
-    # Run analysis
-    results_df, metadata = run_correlation_analysis(
-        n_qubits=args.n_qubits,
-        p=args.p,
-        n_shots=args.n_shots,
-        decoder_params=decoder_params,
-        n_representative_errors=n_errors,
-        rank_range=rank_range,
-        distribution_path=dist_path,
-        seed=args.seed,
-        n_jobs=args.n_jobs,
-        verbose=not args.quiet,
-    )
-
-    # Save results
+    # Output path
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Save DataFrame to parquet
-    results_df.to_parquet(output_path, index=False)
+    if args.exhaustive:
+        # Run exhaustive analysis
+        if not args.quiet:
+            print("Running EXHAUSTIVE correlation analysis...")
+            print(
+                f"  Using {args.num_procs_for_gap} parallel processes for gap computation"
+            )
+
+        results_df, metadata = run_exhaustive_correlation_analysis(
+            n_qubits=args.n_qubits,
+            p=args.p,
+            n_shots=args.n_shots,
+            decoder_params=decoder_params,
+            distribution_path=dist_path,
+            seed=args.seed,
+            num_procs_for_gap=args.num_procs_for_gap,
+            output_path=output_path.with_suffix(".csv"),  # CSV for incremental saving
+            verbose=not args.quiet,
+        )
+
+        # Also save as parquet for efficient loading
+        results_df.to_parquet(output_path, index=False)
+    else:
+        # Run sampled analysis (original behavior)
+        n_errors = args.n_errors
+        rank_range = tuple(args.rank_range) if args.rank_range else None
+
+        # Default to 10 errors if neither specified
+        if n_errors is None and rank_range is None:
+            n_errors = 10
+
+        results_df, metadata = run_correlation_analysis(
+            n_qubits=args.n_qubits,
+            p=args.p,
+            n_shots=args.n_shots,
+            decoder_params=decoder_params,
+            n_representative_errors=n_errors,
+            rank_range=rank_range,
+            distribution_path=dist_path,
+            seed=args.seed,
+            n_jobs=args.n_jobs,
+            verbose=not args.quiet,
+        )
+
+        # Save DataFrame to parquet
+        results_df.to_parquet(output_path, index=False)
 
     # Save metadata to JSON alongside
     metadata_path = output_path.with_suffix(".json")
