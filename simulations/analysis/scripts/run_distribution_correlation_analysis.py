@@ -473,6 +473,7 @@ def run_exhaustive_correlation_analysis(
     distribution_path: Path | None = None,
     seed: int = 42,
     num_procs_for_gap: int = 126,
+    parallel_verbose: int = 0,
     output_path: Path | None = None,
     verbose: bool = True,
 ) -> tuple[pd.DataFrame, dict]:
@@ -500,6 +501,9 @@ def run_exhaustive_correlation_analysis(
     num_procs_for_gap : int
         Number of parallel processes for exhaustive gap computation.
         Defaults to 126.
+    parallel_verbose : int
+        Verbosity level for joblib parallel execution. 0 means silent, higher
+        values show progress information. Defaults to 0.
     output_path : Path, optional
         Path to save results incrementally. If provided, results are appended
         after each shot for data safety.
@@ -621,6 +625,7 @@ def run_exhaustive_correlation_analysis(
             compute_logical_gap_proxy=True,
             logical_gap_proxy_method=None,  # Exhaustive
             num_procs_for_gap=num_procs_for_gap,
+            parallel_verbose=parallel_verbose,
             return_explored_classes=True,
             verbose=False,
         )
@@ -757,6 +762,12 @@ def main():
         default=126,
         help="Number of parallel processes for exhaustive gap computation",
     )
+    parser.add_argument(
+        "--parallel-verbose",
+        type=int,
+        default=0,
+        help="Verbosity level for joblib parallel execution (0=silent, higher=more verbose)",
+    )
 
     parser.add_argument(
         "--seed",
@@ -865,6 +876,7 @@ def main():
             distribution_path=dist_path,
             seed=args.seed,
             num_procs_for_gap=args.num_procs_for_gap,
+            parallel_verbose=args.parallel_verbose,
             output_path=output_path.with_suffix(".csv"),  # CSV for incremental saving
             verbose=not args.quiet,
         )

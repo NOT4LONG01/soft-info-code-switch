@@ -1008,6 +1008,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         coverage_fraction: float | None = None,
         num_procs_for_gap: int = 1,
         return_explored_classes: bool = False,
+        parallel_verbose: int = 0,
         verbose: bool = False,
     ) -> Tuple[
         float,
@@ -1074,6 +1075,10 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             If True, return the explored_classes dictionary containing all explored
             logical classes and their results. Useful for detailed analysis of the
             decoding results across all logical classes. Defaults to False.
+        parallel_verbose : int, optional
+            Verbosity level for joblib parallel execution. 0 means silent, higher
+            values show progress information. Passed directly to joblib.Parallel.
+            Defaults to 0.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
 
@@ -1235,7 +1240,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 priors = self.priors
                 bplsd_kwargs = self._bplsd_kwargs.copy()
 
-                results = Parallel(n_jobs=num_procs_for_gap, prefer="processes")(
+                results = Parallel(
+                    n_jobs=num_procs_for_gap,
+                    prefer="processes",
+                    verbose=parallel_verbose,
+                )(
                     delayed(_decode_single_logical_class)(
                         H_obs_appended, priors, bplsd_kwargs, detector_outcomes, lc
                     )
@@ -1304,7 +1313,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 priors = self.priors
                 bplsd_kwargs = self._bplsd_kwargs.copy()
 
-                results = Parallel(n_jobs=num_procs_for_gap, prefer="processes")(
+                results = Parallel(
+                    n_jobs=num_procs_for_gap,
+                    prefer="processes",
+                    verbose=parallel_verbose,
+                )(
                     delayed(_decode_single_logical_class)(
                         H_obs_appended, priors, bplsd_kwargs, detector_outcomes, lc
                     )
@@ -1375,7 +1388,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 priors = self.priors
                 bplsd_kwargs = self._bplsd_kwargs.copy()
 
-                results = Parallel(n_jobs=num_procs_for_gap, prefer="processes")(
+                results = Parallel(
+                    n_jobs=num_procs_for_gap,
+                    prefer="processes",
+                    verbose=parallel_verbose,
+                )(
                     delayed(_decode_single_logical_class)(
                         H_obs_appended, priors, bplsd_kwargs, detector_outcomes, lc
                     )
@@ -1597,7 +1614,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 priors = self.priors
                 bplsd_kwargs = self._bplsd_kwargs.copy()
 
-                results = Parallel(n_jobs=num_procs_for_gap, prefer="processes")(
+                results = Parallel(
+                    n_jobs=num_procs_for_gap,
+                    prefer="processes",
+                    verbose=parallel_verbose,
+                )(
                     delayed(_decode_single_logical_class)(
                         H_obs_appended, priors, bplsd_kwargs, detector_outcomes, lc
                     )
@@ -1855,6 +1876,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         coverage_fraction: float | None = None,
         num_procs_for_gap: int = 1,
         return_explored_classes: bool = False,
+        parallel_verbose: int = 0,
         verbose: bool = False,
         _benchmarking: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray, bool, Dict[str, Any]]:
@@ -1926,6 +1948,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             (pred_llr, pred_pattern) tuples for all explored classes, enabling detailed
             analysis of the decoding results across all logical classes.
             Only used when compute_logical_gap_proxy is True. Defaults to False.
+        parallel_verbose : int, optional
+            Verbosity level for joblib parallel execution. 0 means silent, higher
+            values show progress information. Passed directly to joblib.Parallel.
+            Only used when compute_logical_gap_proxy is True and num_procs_for_gap != 1.
+            Defaults to 0.
         verbose : bool, optional
             If True, print progress information. Defaults to False.
         _benchmarking : bool
@@ -2112,6 +2139,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 coverage_fraction=coverage_fraction,
                 num_procs_for_gap=num_procs_for_gap,
                 return_explored_classes=return_explored_classes,
+                parallel_verbose=parallel_verbose,
                 verbose=verbose,
             )
 
