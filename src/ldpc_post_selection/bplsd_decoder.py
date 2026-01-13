@@ -107,6 +107,11 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         self._window_structure_cache: Dict[Tuple[int, int, int], Dict[str, Any]] = {}
         self._decoder_cache: Dict[str, SoftOutputsBpLsdDecoder] = {}
 
+        # Cache for coverage-restricted eligible error indices
+        # Key: (distribution_id, coverage_fraction, num_observables)
+        # Value: eligible_error_indices array
+        self._coverage_eligible_cache: Dict[Tuple[int, float, int], np.ndarray] = {}
+
         # Precompute adjacency matrix for efficient cluster labeling
         self._adjacency_matrix = (self.H.T @ self.H == 1).astype(bool)
 
@@ -301,6 +306,13 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                     "logical_error_distribution must be provided when "
                     "coverage_fraction < 1.0 for 'random' method."
                 )
+            # Validate logical_error_distribution length
+            expected_dist_len = 1 << num_observables
+            if len(logical_error_distribution) != expected_dist_len:
+                raise ValueError(
+                    f"logical_error_distribution has length {len(logical_error_distribution)}, "
+                    f"but expected {expected_dist_len} for {num_observables} observables."
+                )
 
             # Use coverage-restricted sampling via error distribution
             return self._sample_coverage_restricted_logical_classes(
@@ -423,22 +435,27 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         if num_additional_classes <= 0:
             return []
 
-        # Create array of valid error indices (exclude identity at index 0)
-        valid_error_indices = np.arange(1, total_num_logical_classes)
-
-        # Get weights for valid errors
-        weights = logical_error_distribution[valid_error_indices].astype(float)
-        weight_sum = weights.sum()
-
-        if weight_sum <= 0:
-            # Fall back to uniform sampling from all errors if all weights are zero
-            if verbose:
-                print(
-                    "  Warning: All distribution weights are zero, "
-                    "falling back to uniform sampling from all classes"
-                )
-            eligible_error_indices = valid_error_indices
+        # Check cache for precomputed eligible error indices
+        cache_key = (id(logical_error_distribution), coverage_fraction, num_observables)
+        if cache_key in self._coverage_eligible_cache:
+            eligible_error_indices = self._coverage_eligible_cache[cache_key]
         else:
+            # Compute eligible error indices
+            # Create array of valid error indices (exclude identity at index 0)
+            valid_error_indices = np.arange(1, total_num_logical_classes)
+
+            # Get weights for valid errors
+            weights = logical_error_distribution[valid_error_indices].astype(float)
+            weight_sum = weights.sum()
+
+            if weight_sum <= 0:
+                raise ValueError(
+                    "All non-identity logical error weights sum to zero. "
+                    "Coverage-restricted sampling requires a valid distribution "
+                    "with positive weights for at least some non-identity errors. "
+                    "Use coverage_fraction=None or 1.0 for uniform sampling without distribution."
+                )
+
             # Sort by probability (descending)
             sorted_order = np.argsort(weights)[::-1]
             sorted_error_indices = valid_error_indices[sorted_order]
@@ -455,14 +472,28 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 eligible_mask[0] = True
             eligible_error_indices = sorted_error_indices[eligible_mask]
 
-            if verbose:
-                print(
-                    f"  Coverage-restricted sampling: {len(eligible_error_indices)} "
-                    f"eligible errors (coverage_fraction={coverage_fraction})"
-                )
+            # Store in cache
+            self._coverage_eligible_cache[cache_key] = eligible_error_indices
 
-        # Sample uniformly from eligible errors
-        num_to_sample = min(num_additional_classes, len(eligible_error_indices))
+        # Validate that num_classes_to_explore covers all eligible errors
+        # (num_additional_classes = num_classes_to_explore - 1, since initial class is excluded)
+        num_eligible = len(eligible_error_indices)
+        if num_additional_classes < num_eligible:
+            raise ValueError(
+                f"num_classes_to_explore ({num_classes_to_explore}) is smaller than the "
+                f"number of eligible errors ({num_eligible} + 1 initial = {num_eligible + 1}) "
+                f"at coverage_fraction={coverage_fraction}. Increase num_classes_to_explore "
+                f"to at least {num_eligible + 1} to cover all eligible errors."
+            )
+
+        if verbose:
+            print(
+                f"  Coverage-restricted sampling: {num_eligible} "
+                f"eligible errors (coverage_fraction={coverage_fraction})"
+            )
+
+        # Sample uniformly from eligible errors (all are taken since we validated above)
+        num_to_sample = min(num_additional_classes, num_eligible)
         if num_to_sample == len(eligible_error_indices):
             # Take all eligible errors
             sampled_error_indices = eligible_error_indices

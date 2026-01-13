@@ -27,6 +27,8 @@ if __name__ == "__main__":
     num_logical_classes = (
         24  # Number of logical classes explored (not used for 'nearby')
     )
+    # For 'random' method only: fraction of cumulative prob mass (None or 1.0 = no restriction)
+    coverage_fraction = None
     compute_all_gap_proxies = True  # Whether gap_proxy_2, gap_proxy_3, ... exist
 
     # Cluster stats configuration
@@ -70,9 +72,17 @@ if __name__ == "__main__":
             )
             gap_proxy_dataset_name = "bb_gap_proxy"
         else:
-            gap_proxy_data_dir_name = f"bb_minsum_iter30_lsd0_raw_gap_proxy_{method_suffix}_{num_logical_classes}"
+            # Build coverage suffix for 'random' method with coverage_fraction
+            cov_suffix = ""
+            if (
+                gap_proxy_method == "random"
+                and coverage_fraction is not None
+                and coverage_fraction < 1.0
+            ):
+                cov_suffix = f"_cov{coverage_fraction}"
+            gap_proxy_data_dir_name = f"bb_minsum_iter30_lsd0_raw_gap_proxy_{method_suffix}_{num_logical_classes}{cov_suffix}"
             gap_proxy_dataset_name = (
-                f"bb_gap_proxy_{method_suffix}_{num_logical_classes}"
+                f"bb_gap_proxy_{method_suffix}_{num_logical_classes}{cov_suffix}"
             )
 
         gap_proxy_data_dir = str(DATA_DIR / gap_proxy_data_dir_name)
@@ -80,6 +90,11 @@ if __name__ == "__main__":
         if os.path.exists(gap_proxy_data_dir):
             if gap_proxy_method == "nearby":
                 print(f"\nProcessing BB code gap_proxy ({gap_proxy_method}) data...")
+            elif cov_suffix:
+                print(
+                    f"\nProcessing BB code gap_proxy ({gap_proxy_method} with "
+                    f"{num_logical_classes} classes, coverage={coverage_fraction}) data..."
+                )
             else:
                 print(
                     f"\nProcessing BB code gap_proxy ({gap_proxy_method} with "

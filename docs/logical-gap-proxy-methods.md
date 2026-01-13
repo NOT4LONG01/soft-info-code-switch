@@ -186,25 +186,34 @@ function RANDOM_GAP(syndrome, initial_class, k, n):
 When a `coverage_fraction` parameter is specified along with `logical_error_distribution`, the random sampling can be restricted to the most likely logical errors. This combines the simplicity of uniform random sampling with the efficiency of distribution-guided selection.
 
 **Behavior**: Given `coverage_fraction = f`:
-1. Sort logical errors by probability (descending)
-2. Compute cumulative probabilities (normalized)
-3. Include only errors where cumulative probability <= f
-4. Sample uniformly from this restricted pool
+1. Exclude the identity error (index 0, representing no logical error)
+2. Sort remaining logical errors by probability (descending)
+3. Normalize probabilities over non-identity errors only (conditional distribution given a logical error occurred)
+4. Compute cumulative probabilities
+5. Include only errors where cumulative probability <= f (max cumulative mass not exceeding f)
+6. Sample uniformly from this restricted pool
+
+**Important Notes**:
+- The normalization excludes the identity error, so `coverage_fraction` represents coverage over the *conditional* distribution P(error | error occurred), not the raw unconditional distribution.
+- The eligibility criterion is cumulative probability **<=** f, meaning the total mass of eligible errors will generally be less than f (excluding the first error that would push cumulative over f).
 
 **Example**: With `coverage_fraction = 0.3`:
-- If errors are sorted as [E1: 20%, E2: 15%, E3: 10%, E4: 5%, ...]
+- If non-identity errors are sorted as [E1: 20%, E2: 15%, E3: 10%, E4: 5%, ...] (normalized)
 - Cumulative: [20%, 35%, 45%, 50%, ...]
-- Only E1 (cumulative 20%) is eligible for sampling
+- Only E1 (cumulative 20% <= 30%) is eligible for sampling
+- E2 would have cumulative 35% > 30%, so it is excluded
 
 **Characteristics**:
 - Focused: Concentrates on the most likely competitors
 - Configurable: `coverage_fraction` controls the trade-off between focus and diversity
 - Requires distribution: Unlike pure random, needs `logical_error_distribution`
 - Uniform within pool: Once eligible errors are selected, sampling is uniform
+- Strict validation: Raises error if all non-identity weights are zero
 
 **Edge Cases**:
 - `coverage_fraction = 1.0` or `None`: Falls back to pure random (no distribution required)
-- Very small `coverage_fraction`: May result in fewer eligible errors than requested samples; all eligible errors are explored
+- Very small `coverage_fraction`: At least one error (the most likely) is always included
+- `num_classes_to_explore` < eligible pool size + 1: Raises error to ensure all eligible errors are explored
 
 ### Most-Likely-First
 

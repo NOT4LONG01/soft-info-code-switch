@@ -375,6 +375,78 @@ class TestSoftOutputsBpLsdDecoder:
         # Should still work, just with fewer samples
         assert "gap_proxy" in soft_outputs
 
+    def test_logical_gap_proxy_random_coverage_fraction_zero_sum_weights(
+        self, circuit_data
+    ):
+        """Test that zero-sum non-identity weights raise error."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Create distribution with only identity having weight
+        logical_error_distribution = np.zeros(1 << num_observables)
+        logical_error_distribution[0] = 1.0  # Only identity has weight
+
+        with pytest.raises(ValueError, match="All non-identity logical error weights"):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method="random",
+                num_classes_to_explore=3,
+                logical_error_distribution=logical_error_distribution,
+                coverage_fraction=0.5,
+            )
+
+    def test_logical_gap_proxy_random_coverage_fraction_wrong_distribution_length(
+        self, circuit_data
+    ):
+        """Test that wrong distribution length on coverage path raises error."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+
+        # Create distribution with wrong length
+        wrong_distribution = np.ones(5)  # Wrong length
+
+        with pytest.raises(ValueError, match="logical_error_distribution has length"):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method="random",
+                num_classes_to_explore=3,
+                logical_error_distribution=wrong_distribution,
+                coverage_fraction=0.5,
+            )
+
+    def test_logical_gap_proxy_random_coverage_fraction_num_classes_too_small(
+        self, circuit_data
+    ):
+        """Test that num_classes_to_explore < eligible pool raises error."""
+        decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
+        num_observables = decoder.obs_matrix.shape[0]
+
+        # Create distribution where many errors are in the coverage
+        # This requires num_observables >= 3 to have enough classes
+        if num_observables < 3:
+            pytest.skip("Test requires at least 3 observables")
+
+        num_classes = 1 << num_observables
+        # Equal weights for first few errors - all will be in coverage
+        logical_error_distribution = np.zeros(num_classes)
+        logical_error_distribution[1] = 1.0
+        logical_error_distribution[2] = 1.0
+        logical_error_distribution[3] = 1.0
+        logical_error_distribution[4] = 1.0 if num_classes > 4 else 0.0
+
+        # With coverage_fraction=1.0, all 4 errors are eligible
+        # But we only request num_classes_to_explore=2 (= 1 additional class)
+        with pytest.raises(ValueError, match="num_classes_to_explore.*is smaller than"):
+            decoder.decode(
+                circuit_data["syndrome"],
+                compute_logical_gap_proxy=True,
+                logical_gap_proxy_method="random",
+                num_classes_to_explore=2,  # Too small, only 1 additional class
+                logical_error_distribution=logical_error_distribution,
+                coverage_fraction=0.9,  # High coverage, many eligible errors
+            )
+
     def test_logical_gap_proxy_disabled(self, circuit_data):
         """Test that gap_proxy is not computed when disabled."""
         decoder = SoftOutputsBpLsdDecoder(circuit=circuit_data["circuit"])
