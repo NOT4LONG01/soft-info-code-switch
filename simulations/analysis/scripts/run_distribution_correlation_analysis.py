@@ -568,31 +568,36 @@ def run_exhaustive_correlation_analysis(
             f"Distribution: {total_shots_dist:,} shots, {logical_error_rate:.4%} logical error rate"
         )
 
-    # Build rank mappings from distribution (excluding index 0 = correct decoding)
-    error_dist = distribution[1:]  # Exclude index 0
-    error_indices = np.arange(1, len(distribution))
-    sorted_order = np.argsort(error_dist)[::-1]  # Descending by count
-    sorted_indices = error_indices[sorted_order]
-    sorted_counts = error_dist[sorted_order]
-    total_errors = error_dist.sum()
-    sorted_probs = (
-        sorted_counts / total_errors
-        if total_errors > 0
-        else sorted_counts.astype(float)
-    )
+    # Build rank mappings from FULL distribution (including index 0 = no error)
+    # All classes are ranked by frequency: rank 0 = most common, rank 1 = second most common, ...
+    all_indices = np.arange(len(distribution))
+    sorted_order = np.argsort(distribution)[::-1]  # Descending by count
+    sorted_indices = all_indices[sorted_order]
 
-    # Create mappings: error_index -> rank, rank -> prob
+    # Create mapping: error_index -> rank (all classes ranked uniformly)
     index_to_rank = {idx: rank for rank, idx in enumerate(sorted_indices)}
-    rank_to_prob = {rank: prob for rank, prob in enumerate(sorted_probs)}
+
+    # Compute probabilities from full distribution P(class_i)
+    total_samples = distribution.sum()
+    index_to_prob = {
+        i: float(distribution[i] / total_samples) if total_samples > 0 else 0.0
+        for i in range(len(distribution))
+    }
+
+    # Report rank of no-error class (index 0)
+    no_error_rank = index_to_rank[0]
+    no_error_prob = index_to_prob[0]
 
     if verbose:
         print(f"\nWill analyze {n_shots} shots with exhaustive exploration")
-        print(f"  Each shot will explore {total_logical_classes - 1} alternate classes")
+        print(f"  Each shot will explore all {total_logical_classes} logical classes")
+        print(
+            f"  No-error class (index=0): rank={no_error_rank}, prob={no_error_prob:.4%}"
+        )
         print(f"  Using {num_procs_for_gap} parallel processes")
 
     # Create decoder
     decoder = SoftOutputsBpLsdDecoder(circuit=circuit, **decoder_params)
-    obs_matrix_T = decoder.obs_matrix.T
 
     # Prepare sampler
     sampler = circuit.compile_detector_sampler(seed=seed + 1000)
@@ -630,26 +635,24 @@ def run_exhaustive_correlation_analysis(
             verbose=False,
         )
 
-        # Get original logical class from the prediction
-        original_logical_class = ((pred.astype(np.uint8) @ obs_matrix_T) % 2).astype(
-            bool
-        )
+        # Get initial logical class from soft_outputs (before gap proxy updates)
+        # This is the correct reference for computing logical errors relative to
+        # the initial BP+LSD prediction (which matches the error distribution)
+        initial_logical_class = soft_outputs["initial_logical_class"]
         best_llr = soft_outputs["pred_llr"]
         explored_classes = soft_outputs["explored_classes"]
 
-        # Build records for this shot
+        # Build records for this shot (including index 0 = no logical error)
         shot_records = []
         for lc_tuple, (llr, _) in explored_classes.items():
-            # Compute error pattern: logical_class XOR original_logical_class
-            error_pattern = np.array(lc_tuple, dtype=bool) ^ original_logical_class
+            # Compute error pattern: logical_class XOR initial_logical_class
+            error_pattern = np.array(lc_tuple, dtype=bool) ^ initial_logical_class
             error_index = logical_class_to_index(error_pattern)
 
-            # Skip index 0 (which corresponds to the original class itself)
-            if error_index == 0:
-                continue
-
-            error_rank = index_to_rank.get(error_index, len(index_to_rank))
-            error_prob = rank_to_prob.get(error_rank, 0.0)
+            # Get rank and probability from full distribution
+            # All classes (including index=0) are ranked by frequency
+            error_rank = index_to_rank.get(error_index, len(index_to_rank) - 1)
+            error_prob = index_to_prob.get(error_index, 0.0)
 
             shot_records.append(
                 {

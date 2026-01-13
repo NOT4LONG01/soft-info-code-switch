@@ -1984,6 +1984,9 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             - explored_classes (dict): Dictionary mapping logical class tuples to
               (pred_llr, pred_pattern) tuples (only if return_explored_classes=True
               and compute_logical_gap_proxy=True)
+            - initial_logical_class (1D numpy array of bool): Logical class from the initial
+              BP+LSD decoding, before any gap proxy exploration updates. Useful for computing
+              logical errors relative to the original prediction (only if obs_matrix is provided)
             - cluster_size_norm_frac_{order} (float): Norm fraction of cluster sizes for each order
             - cluster_llr_norm_frac_{order} (float): Norm fraction of cluster LLRs for each order
         """
@@ -2114,6 +2117,16 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             if verbose:
                 print(f"Number of active clusters: {cluster_id - 1}")
                 print(f"Cluster sizes: {cluster_sizes}")
+
+        # Store initial logical class before gap proxy computation might update pred
+        if self.obs_matrix is not None:
+            initial_logical_class = (
+                (pred.astype("uint8") @ self.obs_matrix.T) % 2
+            ).astype(bool)
+            # Flatten if needed (sparse matrix returns 2D)
+            if hasattr(initial_logical_class, "A1"):
+                initial_logical_class = initial_logical_class.A1
+            soft_outputs["initial_logical_class"] = initial_logical_class
 
         if compute_logical_gap_proxy:
             if verbose:
