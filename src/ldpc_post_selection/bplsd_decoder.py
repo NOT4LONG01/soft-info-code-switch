@@ -6,11 +6,121 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Self
 
 import numpy as np
 import stim
+from joblib import Parallel, delayed
 from ldpc.bplsd_decoder import BpLsdDecoder
 from scipy.sparse import csc_matrix, vstack
 
 from .base import SoftOutputsDecoder
 from .cluster_tools import compute_cluster_stats
+
+
+def _decode_single_logical_class(
+    H_obs_appended: csc_matrix,
+    priors: np.ndarray,
+    bplsd_kwargs: dict,
+    detector_outcomes: np.ndarray,
+    logical_class: np.ndarray,
+) -> Tuple[Tuple[bool, ...], float, np.ndarray]:
+    """
+    Decode a single logical class in isolation for parallel execution.
+
+    This function creates its own decoder instance to ensure thread-safety
+    when called in parallel.
+
+    Parameters
+    ----------
+    H_obs_appended : scipy csc_matrix of uint8
+        Parity check matrix with observable matrix appended.
+    priors : 1D numpy array of float
+        Error probabilities.
+    bplsd_kwargs : dict
+        Keyword arguments for BpLsdDecoder initialization.
+    detector_outcomes : 1D numpy array of bool
+        Detector measurement outcomes.
+    logical_class : 1D numpy array of bool
+        Fixed logical class to decode with.
+
+    Returns
+    -------
+    logical_class_tuple : tuple of bool
+        The logical class as a tuple (for use as dict key).
+    pred_llr : float
+        Prediction LLR for the fixed logical class decoding.
+    pred : 1D numpy array of bool
+        Predicted error pattern.
+    """
+    # Import here to avoid circular import (function is at module level)
+    decoder = SoftOutputsBpLsdDecoder(
+        H=H_obs_appended,
+        p=priors,
+        obs_matrix=None,
+        **bplsd_kwargs,
+    )
+
+    detector_outcomes_obs_appended = np.concatenate([detector_outcomes, logical_class])
+
+    pred, _, _, soft_outputs = decoder.decode(
+        detector_outcomes_obs_appended,
+        include_cluster_stats=False,
+        compute_logical_gap_proxy=False,
+        verbose=False,
+    )
+
+    return tuple(logical_class), soft_outputs["pred_llr"], pred
+
+
+def _compute_intermediate_gap_proxies_posthoc(
+    original_pred_llr: float,
+    results: List[Tuple[Tuple[bool, ...], float, np.ndarray]],
+) -> Dict[int, float]:
+    """
+    Compute intermediate gap proxies from parallel execution results.
+
+    Since parallel execution doesn't have a deterministic order that matches
+    the sampling order, we compute intermediate gap proxies based on the
+    order results were specified (which preserves the original sampling order
+    when using joblib with ordered results).
+
+    Parameters
+    ----------
+    original_pred_llr : float
+        The prediction LLR from the initial (best) logical class.
+    results : list of tuple
+        List of (logical_class_tuple, pred_llr, pred_pattern) from parallel
+        execution, in the original order they were submitted.
+
+    Returns
+    -------
+    gap_proxies_by_num_classes : dict of int to float
+        Dictionary mapping number of explored classes to gap proxy value.
+    """
+    gap_proxies_by_num_classes: Dict[int, float] = {}
+
+    running_best_llr = float(original_pred_llr)
+    running_second_best_llr = float("inf")
+    explored_count = 1  # Initial class already counted
+
+    for _, pred_llr, _ in results:
+        explored_count += 1
+        pred_llr_float = float(pred_llr)
+
+        if pred_llr_float <= running_best_llr:
+            running_second_best_llr = running_best_llr
+            running_best_llr = pred_llr_float
+        elif pred_llr_float < running_second_best_llr:
+            running_second_best_llr = pred_llr_float
+
+        if explored_count >= 2:
+            effective_second = (
+                running_second_best_llr
+                if running_second_best_llr != float("inf")
+                else running_best_llr
+            )
+            gap_proxies_by_num_classes[explored_count] = float(
+                effective_second - running_best_llr
+            )
+
+    return gap_proxies_by_num_classes
 
 
 class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
@@ -896,6 +1006,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         compute_all_intermediate_gap_proxies: bool = False,
         logical_error_distribution: np.ndarray | None = None,
         coverage_fraction: float | None = None,
+        num_procs_for_gap: int = 1,
         verbose: bool = False,
     ) -> Tuple[float, np.ndarray, float, Dict[int, float]]:
         """
@@ -946,6 +1057,12 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             (default behavior). Requires `logical_error_distribution` when < 1.0.
             Only used when `logical_gap_proxy_method` is 'random'.
             Defaults to None.
+        num_procs_for_gap : int, optional
+            Number of parallel processes for decoding logical classes. Only effective
+            for methods where classes are determined upfront: None (exhaustive),
+            'random', 'most-likely-first', 'weighted-random'. Set to -1 to use
+            all available CPUs. Raises ValueError for 'nearby' and adaptive methods
+            when > 1. Defaults to 1 (sequential).
         verbose : bool, optional
             If True, print progress information. Defaults to False.
 
@@ -963,6 +1080,18 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             is True and `logical_gap_proxy_method` is 'random', 'most-likely-first',
             'weighted-random', 'most-likely-first-adaptive', or 'weighted-random-adaptive'.
         """
+        # Validate num_procs_for_gap for methods that require sequential execution
+        if num_procs_for_gap != 1 and logical_gap_proxy_method in (
+            "nearby",
+            "most-likely-first-adaptive",
+            "weighted-random-adaptive",
+        ):
+            raise ValueError(
+                f"num_procs_for_gap={num_procs_for_gap} is not supported "
+                f"for logical_gap_proxy_method='{logical_gap_proxy_method}' which "
+                f"requires sequential execution due to adaptive exploration."
+            )
+
         if verbose:
             print("  Computing logical gap proxy...")
 
@@ -1047,37 +1176,65 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 verbose=verbose,
             )
 
-            # Track intermediate gap proxies during exploration
-            if compute_all_intermediate_gap_proxies:
-                running_best_llr = float(original_pred_llr)
-                running_second_best_llr = float("inf")
-                explored_count = 1
-
-            for logical_class in random_logical_classes:
-                pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
-                    detector_outcomes, logical_class, verbose=verbose
-                )
-                explored_classes[tuple(logical_class)] = (pred_llr, pred_pattern)
-
-                # Track intermediate gap proxies if requested
+            if num_procs_for_gap == 1:
+                # Sequential execution
                 if compute_all_intermediate_gap_proxies:
-                    explored_count += 1
-                    pred_llr_float = float(pred_llr)
-                    if pred_llr_float <= running_best_llr:
-                        running_second_best_llr = running_best_llr
-                        running_best_llr = pred_llr_float
-                    elif pred_llr_float < running_second_best_llr:
-                        running_second_best_llr = pred_llr_float
+                    running_best_llr = float(original_pred_llr)
+                    running_second_best_llr = float("inf")
+                    explored_count = 1
 
-                    if explored_count >= 2:
-                        effective_second = (
-                            running_second_best_llr
-                            if running_second_best_llr != float("inf")
-                            else running_best_llr
+                for logical_class in random_logical_classes:
+                    pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
+                        detector_outcomes, logical_class, verbose=verbose
+                    )
+                    explored_classes[tuple(logical_class)] = (pred_llr, pred_pattern)
+
+                    if compute_all_intermediate_gap_proxies:
+                        explored_count += 1
+                        pred_llr_float = float(pred_llr)
+                        if pred_llr_float <= running_best_llr:
+                            running_second_best_llr = running_best_llr
+                            running_best_llr = pred_llr_float
+                        elif pred_llr_float < running_second_best_llr:
+                            running_second_best_llr = pred_llr_float
+
+                        if explored_count >= 2:
+                            effective_second = (
+                                running_second_best_llr
+                                if running_second_best_llr != float("inf")
+                                else running_best_llr
+                            )
+                            gap_proxies_by_num_classes[explored_count] = float(
+                                effective_second - running_best_llr
+                            )
+            else:
+                # Parallel execution
+                if verbose:
+                    print(
+                        f"  Parallel decoding with num_procs_for_gap="
+                        f"{num_procs_for_gap}"
+                    )
+
+                H_obs_appended = self._H_obs_appended
+                priors = self.priors
+                bplsd_kwargs = self._bplsd_kwargs.copy()
+
+                results = Parallel(n_jobs=num_procs_for_gap, prefer="processes")(
+                    delayed(_decode_single_logical_class)(
+                        H_obs_appended, priors, bplsd_kwargs, detector_outcomes, lc
+                    )
+                    for lc in random_logical_classes
+                )
+
+                for lc_tuple, pred_llr, pred_pattern in results:
+                    explored_classes[lc_tuple] = (pred_llr, pred_pattern)
+
+                if compute_all_intermediate_gap_proxies:
+                    gap_proxies_by_num_classes = (
+                        _compute_intermediate_gap_proxies_posthoc(
+                            original_pred_llr, results
                         )
-                        gap_proxies_by_num_classes[explored_count] = float(
-                            effective_second - running_best_llr
-                        )
+                    )
 
         elif logical_gap_proxy_method == "most-likely-first":
             # Get logical classes to explore based on most likely logical errors
@@ -1088,37 +1245,65 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 verbose=verbose,
             )
 
-            # Track intermediate gap proxies during exploration
-            if compute_all_intermediate_gap_proxies:
-                running_best_llr = float(original_pred_llr)
-                running_second_best_llr = float("inf")
-                explored_count = 1
-
-            for logical_class in most_likely_logical_classes:
-                pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
-                    detector_outcomes, logical_class, verbose=verbose
-                )
-                explored_classes[tuple(logical_class)] = (pred_llr, pred_pattern)
-
-                # Track intermediate gap proxies if requested
+            if num_procs_for_gap == 1:
+                # Sequential execution
                 if compute_all_intermediate_gap_proxies:
-                    explored_count += 1
-                    pred_llr_float = float(pred_llr)
-                    if pred_llr_float <= running_best_llr:
-                        running_second_best_llr = running_best_llr
-                        running_best_llr = pred_llr_float
-                    elif pred_llr_float < running_second_best_llr:
-                        running_second_best_llr = pred_llr_float
+                    running_best_llr = float(original_pred_llr)
+                    running_second_best_llr = float("inf")
+                    explored_count = 1
 
-                    if explored_count >= 2:
-                        effective_second = (
-                            running_second_best_llr
-                            if running_second_best_llr != float("inf")
-                            else running_best_llr
+                for logical_class in most_likely_logical_classes:
+                    pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
+                        detector_outcomes, logical_class, verbose=verbose
+                    )
+                    explored_classes[tuple(logical_class)] = (pred_llr, pred_pattern)
+
+                    if compute_all_intermediate_gap_proxies:
+                        explored_count += 1
+                        pred_llr_float = float(pred_llr)
+                        if pred_llr_float <= running_best_llr:
+                            running_second_best_llr = running_best_llr
+                            running_best_llr = pred_llr_float
+                        elif pred_llr_float < running_second_best_llr:
+                            running_second_best_llr = pred_llr_float
+
+                        if explored_count >= 2:
+                            effective_second = (
+                                running_second_best_llr
+                                if running_second_best_llr != float("inf")
+                                else running_best_llr
+                            )
+                            gap_proxies_by_num_classes[explored_count] = float(
+                                effective_second - running_best_llr
+                            )
+            else:
+                # Parallel execution
+                if verbose:
+                    print(
+                        f"  Parallel decoding with num_procs_for_gap="
+                        f"{num_procs_for_gap}"
+                    )
+
+                H_obs_appended = self._H_obs_appended
+                priors = self.priors
+                bplsd_kwargs = self._bplsd_kwargs.copy()
+
+                results = Parallel(n_jobs=num_procs_for_gap, prefer="processes")(
+                    delayed(_decode_single_logical_class)(
+                        H_obs_appended, priors, bplsd_kwargs, detector_outcomes, lc
+                    )
+                    for lc in most_likely_logical_classes
+                )
+
+                for lc_tuple, pred_llr, pred_pattern in results:
+                    explored_classes[lc_tuple] = (pred_llr, pred_pattern)
+
+                if compute_all_intermediate_gap_proxies:
+                    gap_proxies_by_num_classes = (
+                        _compute_intermediate_gap_proxies_posthoc(
+                            original_pred_llr, results
                         )
-                        gap_proxies_by_num_classes[explored_count] = float(
-                            effective_second - running_best_llr
-                        )
+                    )
 
         elif logical_gap_proxy_method == "weighted-random":
             # Get logical classes to explore using weighted random sampling
@@ -1131,37 +1316,65 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 )
             )
 
-            # Track intermediate gap proxies during exploration
-            if compute_all_intermediate_gap_proxies:
-                running_best_llr = float(original_pred_llr)
-                running_second_best_llr = float("inf")
-                explored_count = 1
-
-            for logical_class in weighted_random_logical_classes:
-                pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
-                    detector_outcomes, logical_class, verbose=verbose
-                )
-                explored_classes[tuple(logical_class)] = (pred_llr, pred_pattern)
-
-                # Track intermediate gap proxies if requested
+            if num_procs_for_gap == 1:
+                # Sequential execution
                 if compute_all_intermediate_gap_proxies:
-                    explored_count += 1
-                    pred_llr_float = float(pred_llr)
-                    if pred_llr_float <= running_best_llr:
-                        running_second_best_llr = running_best_llr
-                        running_best_llr = pred_llr_float
-                    elif pred_llr_float < running_second_best_llr:
-                        running_second_best_llr = pred_llr_float
+                    running_best_llr = float(original_pred_llr)
+                    running_second_best_llr = float("inf")
+                    explored_count = 1
 
-                    if explored_count >= 2:
-                        effective_second = (
-                            running_second_best_llr
-                            if running_second_best_llr != float("inf")
-                            else running_best_llr
+                for logical_class in weighted_random_logical_classes:
+                    pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
+                        detector_outcomes, logical_class, verbose=verbose
+                    )
+                    explored_classes[tuple(logical_class)] = (pred_llr, pred_pattern)
+
+                    if compute_all_intermediate_gap_proxies:
+                        explored_count += 1
+                        pred_llr_float = float(pred_llr)
+                        if pred_llr_float <= running_best_llr:
+                            running_second_best_llr = running_best_llr
+                            running_best_llr = pred_llr_float
+                        elif pred_llr_float < running_second_best_llr:
+                            running_second_best_llr = pred_llr_float
+
+                        if explored_count >= 2:
+                            effective_second = (
+                                running_second_best_llr
+                                if running_second_best_llr != float("inf")
+                                else running_best_llr
+                            )
+                            gap_proxies_by_num_classes[explored_count] = float(
+                                effective_second - running_best_llr
+                            )
+            else:
+                # Parallel execution
+                if verbose:
+                    print(
+                        f"  Parallel decoding with num_procs_for_gap="
+                        f"{num_procs_for_gap}"
+                    )
+
+                H_obs_appended = self._H_obs_appended
+                priors = self.priors
+                bplsd_kwargs = self._bplsd_kwargs.copy()
+
+                results = Parallel(n_jobs=num_procs_for_gap, prefer="processes")(
+                    delayed(_decode_single_logical_class)(
+                        H_obs_appended, priors, bplsd_kwargs, detector_outcomes, lc
+                    )
+                    for lc in weighted_random_logical_classes
+                )
+
+                for lc_tuple, pred_llr, pred_pattern in results:
+                    explored_classes[lc_tuple] = (pred_llr, pred_pattern)
+
+                if compute_all_intermediate_gap_proxies:
+                    gap_proxies_by_num_classes = (
+                        _compute_intermediate_gap_proxies_posthoc(
+                            original_pred_llr, results
                         )
-                        gap_proxies_by_num_classes[explored_count] = float(
-                            effective_second - running_best_llr
-                        )
+                    )
 
         elif logical_gap_proxy_method == "most-likely-first-adaptive":
             # Adaptive exploration: update base class when better class found
@@ -1335,21 +1548,48 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         elif logical_gap_proxy_method is None:
             # Explore all classes (except the initial one)
             num_observables = len(original_logical_class)
-            all_logical_classes = product([False, True], repeat=num_observables)
+            original_class_tuple = tuple(original_logical_class)
 
             if verbose:
                 print(f"  Exploring all {1 << num_observables} logical classes")
 
-            for logical_class_tuple in all_logical_classes:
-                if logical_class_tuple == tuple(original_logical_class):
-                    continue
-                logical_class = np.array(logical_class_tuple, dtype=bool)
+            # Build list of all logical classes to explore (excluding original)
+            all_logical_classes_to_explore = [
+                np.array(lc_tuple, dtype=bool)
+                for lc_tuple in product([False, True], repeat=num_observables)
+                if lc_tuple != original_class_tuple
+            ]
+
+            if num_procs_for_gap == 1:
+                # Sequential execution
+                for logical_class in all_logical_classes_to_explore:
+                    if verbose:
+                        print(f"  Processing logical class {logical_class}")
+                    pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
+                        detector_outcomes, logical_class, verbose=verbose
+                    )
+                    explored_classes[tuple(logical_class)] = (pred_llr, pred_pattern)
+            else:
+                # Parallel execution
                 if verbose:
-                    print(f"  Processing logical class {logical_class}")
-                pred_llr, pred_pattern = self._perform_fixed_logical_class_decoding(
-                    detector_outcomes, logical_class, verbose=verbose
+                    print(
+                        f"  Parallel decoding with num_procs_for_gap="
+                        f"{num_procs_for_gap}"
+                    )
+
+                H_obs_appended = self._H_obs_appended
+                priors = self.priors
+                bplsd_kwargs = self._bplsd_kwargs.copy()
+
+                results = Parallel(n_jobs=num_procs_for_gap, prefer="processes")(
+                    delayed(_decode_single_logical_class)(
+                        H_obs_appended, priors, bplsd_kwargs, detector_outcomes, lc
+                    )
+                    for lc in all_logical_classes_to_explore
                 )
-                explored_classes[logical_class_tuple] = (pred_llr, pred_pattern)
+
+                for lc_tuple, pred_llr, pred_pattern in results:
+                    explored_classes[lc_tuple] = (pred_llr, pred_pattern)
 
         else:
             # 'nearby' method: Iterative exploration for nearby classes only
@@ -1591,6 +1831,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         compute_all_intermediate_gap_proxies: bool = False,
         logical_error_distribution: np.ndarray | None = None,
         coverage_fraction: float | None = None,
+        num_procs_for_gap: int = 1,
         verbose: bool = False,
         _benchmarking: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray, bool, Dict[str, Any]]:
@@ -1649,6 +1890,13 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             (default behavior). Requires `logical_error_distribution` when < 1.0.
             Only used when `logical_gap_proxy_method` is 'random'.
             Defaults to None.
+        num_procs_for_gap : int, optional
+            Number of parallel processes for decoding logical classes. Only effective
+            for methods where classes are determined upfront: None (exhaustive),
+            'random', 'most-likely-first', 'weighted-random'. Set to -1 to use
+            all available CPUs. Raises ValueError for 'nearby' and adaptive methods
+            when > 1. Only used when compute_logical_gap_proxy is True.
+            Defaults to 1 (sequential).
         verbose : bool, optional
             If True, print progress information. Defaults to False.
         _benchmarking : bool
@@ -1829,6 +2077,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
                 compute_all_intermediate_gap_proxies=compute_all_intermediate_gap_proxies,
                 logical_error_distribution=logical_error_distribution,
                 coverage_fraction=coverage_fraction,
+                num_procs_for_gap=num_procs_for_gap,
                 verbose=verbose,
             )
 

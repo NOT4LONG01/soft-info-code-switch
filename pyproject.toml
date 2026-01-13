@@ -21,6 +21,7 @@ dependencies = [
     "python-igraph",
     "pymatching",
     "ldpc>=2.4.0",
+    "joblib",
 ]
 
 [tool.setuptools]
