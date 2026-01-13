@@ -37,6 +37,7 @@ sys.path.insert(0, str(project_root / "src"))
 sys.path.insert(0, str(project_root / "simulations"))
 
 from ldpc_post_selection.bplsd_decoder import SoftOutputsBpLsdDecoder
+from ldpc_post_selection.cluster_tools import compute_cluster_norm_fraction
 from ldpc_post_selection.logical_error_distribution import (
     index_to_logical_class,
     logical_class_to_index,
@@ -628,7 +629,7 @@ def run_exhaustive_correlation_analysis(
         # Decode with exhaustive gap proxy (parallelized)
         pred, _, _, soft_outputs = decoder.decode(
             det,
-            include_cluster_stats=False,
+            include_cluster_stats=True,  # Enable for cluster fraction metrics
             compute_logical_gap_proxy=True,
             logical_gap_proxy_method=None,  # Exhaustive
             num_procs_for_gap=num_procs_for_gap,
@@ -643,6 +644,10 @@ def run_exhaustive_correlation_analysis(
         initial_logical_class = soft_outputs["initial_logical_class"]
         best_llr = soft_outputs["pred_llr"]
         explored_classes = soft_outputs["explored_classes"]
+
+        # Compute cluster fraction LLR 2-norm (per-shot metric)
+        cluster_llrs = soft_outputs["cluster_llrs"]
+        cluster_frac_llr_2norm = compute_cluster_norm_fraction(cluster_llrs, order=2)
 
         # Compute final logical class from pred (after gap proxy updates)
         final_logical_class = ((pred.astype(np.uint8) @ obs_matrix_T) % 2).astype(bool)
@@ -680,6 +685,7 @@ def run_exhaustive_correlation_analysis(
                     "llr_delta": float(llr - best_llr),
                     "initial_success": initial_success,
                     "final_success": final_success,
+                    "cluster_frac_llr_2norm": float(cluster_frac_llr_2norm),
                 }
             )
 
