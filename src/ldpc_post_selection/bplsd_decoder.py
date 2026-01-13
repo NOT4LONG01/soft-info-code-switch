@@ -1987,8 +1987,6 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             - initial_logical_class (1D numpy array of bool): Logical class from the initial
               BP+LSD decoding, before any gap proxy exploration updates. Useful for computing
               logical errors relative to the original prediction (only if obs_matrix is provided)
-            - cluster_size_norm_frac_{order} (float): Norm fraction of cluster sizes for each order
-            - cluster_llr_norm_frac_{order} (float): Norm fraction of cluster LLRs for each order
         """
         if verbose:
             print("Starting BP+LSD decoding...")
@@ -1997,7 +1995,12 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             start_time = time.time()
             step_start = time.time()
 
-        # Gap proxy computation disables cluster stats for efficiency
+        # Save original include_cluster_stats before gap proxy override
+        # Cluster stats from initial decode are still useful even with gap proxy
+        include_cluster_stats_initial = include_cluster_stats
+
+        # Gap proxy computation disables cluster stats for fixed-class decodes
+        # (Note: fixed-class decodes already have include_cluster_stats=False hardcoded)
         if compute_logical_gap_proxy:
             include_cluster_stats = False
 
@@ -2068,7 +2071,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             print(f"Prediction LLR: {soft_outputs['pred_llr']:.4f}")
             print(f"Detector density: {soft_outputs['detector_density']:.4f}")
 
-        if include_cluster_stats:
+        if include_cluster_stats_initial:
             if verbose:
                 print("Computing cluster statistics...")
 
