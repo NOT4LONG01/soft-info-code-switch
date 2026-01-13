@@ -598,14 +598,15 @@ def run_exhaustive_correlation_analysis(
 
     # Create decoder
     decoder = SoftOutputsBpLsdDecoder(circuit=circuit, **decoder_params)
+    obs_matrix_T = decoder.obs_matrix.T  # For computing final logical class
 
     # Prepare sampler
     sampler = circuit.compile_detector_sampler(seed=seed + 1000)
 
-    # Sample all detector outcomes at once
+    # Sample all detector outcomes and observable outcomes (ground truth)
     if verbose:
         print(f"\nSampling {n_shots:,} detector outcomes...")
-    det_all, _ = sampler.sample(n_shots, separate_observables=True)
+    det_all, obs_all = sampler.sample(n_shots, separate_observables=True)
 
     # Process shots
     all_results = []
@@ -622,6 +623,7 @@ def run_exhaustive_correlation_analysis(
 
     for shot_idx in iterator:
         det = det_all[shot_idx]
+        correct_obs = obs_all[shot_idx]  # Ground truth observable outcomes
 
         # Decode with exhaustive gap proxy (parallelized)
         pred, _, _, soft_outputs = decoder.decode(
@@ -641,6 +643,19 @@ def run_exhaustive_correlation_analysis(
         initial_logical_class = soft_outputs["initial_logical_class"]
         best_llr = soft_outputs["pred_llr"]
         explored_classes = soft_outputs["explored_classes"]
+
+        # Compute final logical class from pred (after gap proxy updates)
+        final_logical_class = ((pred.astype(np.uint8) @ obs_matrix_T) % 2).astype(bool)
+        # Flatten if needed (sparse matrix returns 2D)
+        if hasattr(final_logical_class, "A1"):
+            final_logical_class = final_logical_class.A1
+
+        # Convert correct observable outcomes to logical class format
+        correct_logical_class = np.asarray(correct_obs, dtype=bool)
+
+        # Check decoding success
+        initial_success = np.array_equal(initial_logical_class, correct_logical_class)
+        final_success = np.array_equal(final_logical_class, correct_logical_class)
 
         # Build records for this shot (including index 0 = no logical error)
         shot_records = []
@@ -663,6 +678,8 @@ def run_exhaustive_correlation_analysis(
                     "fixed_llr": float(llr),
                     "best_llr": float(best_llr),
                     "llr_delta": float(llr - best_llr),
+                    "initial_success": initial_success,
+                    "final_success": final_success,
                 }
             )
 
