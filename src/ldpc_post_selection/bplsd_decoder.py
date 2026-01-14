@@ -585,15 +585,15 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             # Store in cache
             self._coverage_eligible_cache[cache_key] = eligible_error_indices
 
-        # Validate that num_classes_to_explore covers all eligible errors
+        # Validate that num_classes_to_explore does not exceed the eligible pool
         # (num_additional_classes = num_classes_to_explore - 1, since initial class is excluded)
         num_eligible = len(eligible_error_indices)
-        if num_additional_classes < num_eligible:
+        if num_additional_classes > num_eligible:
             raise ValueError(
-                f"num_classes_to_explore ({num_classes_to_explore}) is smaller than the "
-                f"number of eligible errors ({num_eligible} + 1 initial = {num_eligible + 1}) "
-                f"at coverage_fraction={coverage_fraction}. Increase num_classes_to_explore "
-                f"to at least {num_eligible + 1} to cover all eligible errors."
+                f"num_classes_to_explore ({num_classes_to_explore}) exceeds the number of "
+                f"eligible errors ({num_eligible} + 1 initial = {num_eligible + 1}) "
+                f"at coverage_fraction={coverage_fraction}. Decrease num_classes_to_explore "
+                f"to at most {num_eligible + 1}, or increase coverage_fraction."
             )
 
         if verbose:
