@@ -7,18 +7,27 @@ This script runs the computationally intensive part of the analysis:
 2. Selects representative errors across the distribution (sampled mode)
    OR explores ALL logical classes (exhaustive mode)
 3. For each shot: standard decode + fixed-class decodes for selected errors
-4. Saves results to a parquet file for analysis in notebook
+4. Saves results incrementally to a parquet file for analysis in notebook
+
+Restart Support (exhaustive mode):
+    If the output file already exists, the script will load existing results and
+    continue from the last completed shot. This allows stopping and restarting
+    long-running simulations without losing progress.
 
 Usage:
     python run_distribution_correlation_analysis.py --help
 
     # Sampled mode (select representative errors)
     python run_distribution_correlation_analysis.py --n-shots 10000 --output results.parquet
-    python run_distribution_correlation_analysis.py --n-shots 50000 --n-errors 20 --p 0.003
 
     # Exhaustive mode (explore ALL logical classes with parallelization)
-    python run_distribution_correlation_analysis.py --exhaustive --n-shots 10 \\
-        --num-procs-for-gap 126 --output exhaustive_results.parquet
+    # Note: Use a filename without shot count for restart support
+    python run_distribution_correlation_analysis.py --exhaustive --n-shots 100 \\
+        --num-procs-for-gap 126 --output bb_n144_exhaustive.parquet
+
+    # Resume interrupted simulation (just run the same command again)
+    python run_distribution_correlation_analysis.py --exhaustive --n-shots 100 \\
+        --num-procs-for-gap 126 --output bb_n144_exhaustive.parquet
 """
 
 import argparse
@@ -609,18 +618,55 @@ def run_exhaustive_correlation_analysis(
         print(f"\nSampling {n_shots:,} detector outcomes...")
     det_all, obs_all = sampler.sample(n_shots, separate_observables=True)
 
-    # Process shots
+    # Process shots - check for existing results to enable restart
     all_results = []
-    iterator = (
-        tqdm(range(n_shots), desc="Processing shots") if verbose else range(n_shots)
-    )
+    start_shot_idx = 0
 
-    # Prepare output file for incremental saving
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        # Remove existing file if present (fresh start)
+        # Load existing results if present (restart mode)
         if output_path.exists():
-            output_path.unlink()
+            existing_df = pd.read_parquet(output_path)
+            all_results = existing_df.to_dict("records")
+            start_shot_idx = existing_df["shot_id"].max() + 1
+            if verbose:
+                print(
+                    f"\nResuming from existing file: {len(existing_df):,} records, "
+                    f"{existing_df['shot_id'].nunique()} shots completed"
+                )
+                print(f"Continuing from shot {start_shot_idx}")
+
+    # Skip if all requested shots already processed
+    if start_shot_idx >= n_shots:
+        if verbose:
+            print(f"All {n_shots} shots already processed. Nothing to do.")
+        results_df = pd.DataFrame(all_results)
+        return results_df, {
+            "n_qubits": n_qubits,
+            "distance": distance,
+            "p": p,
+            "n_shots": n_shots,
+            "exhaustive": True,
+            "total_logical_classes": total_logical_classes,
+            "num_observables": num_observables,
+            "logical_error_rate": logical_error_rate,
+            "distribution_shots": int(total_shots_dist),
+            "decoder_params": decoder_params,
+            "seed": seed,
+            "num_procs_for_gap": num_procs_for_gap,
+        }
+
+    remaining_shots = n_shots - start_shot_idx
+    iterator = (
+        tqdm(
+            range(start_shot_idx, n_shots),
+            desc="Processing shots",
+            initial=start_shot_idx,
+            total=n_shots,
+        )
+        if verbose
+        else range(start_shot_idx, n_shots)
+    )
 
     for shot_idx in iterator:
         det = det_all[shot_idx]
@@ -691,11 +737,9 @@ def run_exhaustive_correlation_analysis(
 
         all_results.extend(shot_records)
 
-        # Incremental save
+        # Incremental save: save entire DataFrame to parquet after each shot
         if output_path:
-            pd.DataFrame(shot_records).to_csv(
-                output_path, mode="a", header=(shot_idx == 0), index=False
-            )
+            pd.DataFrame(all_results).to_parquet(output_path, index=False)
 
     # Create DataFrame
     results_df = pd.DataFrame(all_results)
@@ -903,12 +947,9 @@ def main():
             seed=args.seed,
             num_procs_for_gap=args.num_procs_for_gap,
             parallel_verbose=args.parallel_verbose,
-            output_path=output_path.with_suffix(".csv"),  # CSV for incremental saving
+            output_path=output_path,  # Parquet for incremental saving
             verbose=not args.quiet,
         )
-
-        # Also save as parquet for efficient loading
-        results_df.to_parquet(output_path, index=False)
     else:
         # Run sampled analysis (original behavior)
         n_errors = args.n_errors
