@@ -260,14 +260,14 @@ if __name__ == "__main__":
     nlist = [144]
 
     shots_per_batch = round(1e4)
-    total_shots = round(1e6)
+    total_shots = round(1e4)
     compute_logical_gap_proxy = True
     include_cluster_stats = False
     logical_gap_proxy_method = (
         "random"  # None, 'nearby', 'random', 'most-likely-first', or 'weighted-random'
     )
     num_classes_to_explore = 24  # Required when method is 'random', 'most-likely-first', or 'weighted-random'
-    coverage_fraction = 0.5  # For 'random' method: fraction of cumulative prob mass to sample from (e.g., 0.3)
+    coverage_fraction = None  # For 'random' method: fraction of cumulative prob mass to sample from (e.g., 0.3)
     compute_all_intermediate_gap_proxies = True
     precompute_distribution_shots = 1000 * 2**12
 

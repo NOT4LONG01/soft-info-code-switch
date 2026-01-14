@@ -23,7 +23,7 @@ if __name__ == "__main__":
 
     # Gap proxy configuration
     # Options: 'nearby', 'random', 'mlf', 'weighted-random', 'mlf-adaptive', 'weighted-random-adaptive'
-    gap_proxy_method = "weighted-random-adaptive"
+    gap_proxy_method = "random"
     num_logical_classes = (
         24  # Number of logical classes explored (not used for 'nearby')
     )
