@@ -23,6 +23,7 @@ class SoftOutputsMatchingDecoder(SoftOutputsDecoder):
         p: Optional[np.ndarray | List[float]] = None,
         obs_matrix: Optional[csc_matrix | np.ndarray | List[List[bool | int]]] = None,
         circuit: Optional[stim.Circuit] = None,
+        merge_duplicate_errors: bool = False,
     ):
         """
         PyMatching decoder with additional soft outputs
@@ -37,9 +38,18 @@ class SoftOutputsMatchingDecoder(SoftOutputsDecoder):
             Observable matrix. Internally stored as a scipy csc matrix of uint8.
         circuit : stim.Circuit, optional
             Circuit.
+        merge_duplicate_errors : bool, optional
+            If True and a circuit is provided, merge error mechanisms with identical
+            detector and observable patterns into a single column, combining their
+            probabilities using the XOR formula for independent events. Defaults to False.
         """
         super().__init__(
-            H=H, p=p, obs_matrix=obs_matrix, circuit=circuit, decompose_errors=True
+            H=H,
+            p=p,
+            obs_matrix=obs_matrix,
+            circuit=circuit,
+            decompose_errors=True,
+            merge_duplicate_errors=merge_duplicate_errors,
         )
 
         if self.obs_matrix is None or self.obs_matrix.shape[0] == 0:

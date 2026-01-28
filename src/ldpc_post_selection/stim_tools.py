@@ -7,6 +7,7 @@ from scipy.sparse import csc_matrix
 
 def dem_to_parity_check(
     dem: stim.DetectorErrorModel,
+    merge_duplicates: bool = False,
 ) -> Tuple[csc_matrix, csc_matrix, np.ndarray]:
     """
     Convert a detector error model (DEM) into a parity check matrix, observable matrix,
@@ -16,6 +17,10 @@ def dem_to_parity_check(
     ----------
     dem : stim.DetectorErrorModel
         The detector error model to convert.
+    merge_duplicates : bool
+        If True, merge error mechanisms with identical detector and observable patterns
+        into a single column, combining their probabilities using the XOR formula for
+        independent events: p_combined = p1 + p2 - 2*p1*p2. Default is False.
 
     Returns
     -------
@@ -30,50 +35,69 @@ def dem_to_parity_check(
     """
     dem = dem.flattened()
 
-    final_probabilities = []
-    final_det_id_lists = []
-    final_obs_id_lists = []
+    final_probabilities: list[float] = []
+    final_det_id_lists: list[list[int]] = []
+    final_obs_id_lists: list[list[int]] = []
+
+    # For merge_duplicates mode: map (dets_tuple, obs_tuple) -> column index
+    pattern_to_idx: dict[tuple[tuple[int, ...], tuple[int, ...]], int] = {}
+
+    def add_error_mechanism(
+        det_ids: list[int], obs_ids: list[int], prob: float
+    ) -> None:
+        """Add an error mechanism, optionally merging with existing duplicates."""
+        if not det_ids and not obs_ids:
+            return
+
+        if merge_duplicates:
+            # Create a hashable key from sorted detector and observable IDs
+            key = (tuple(sorted(det_ids)), tuple(sorted(obs_ids)))
+            if key in pattern_to_idx:
+                # Merge probabilities using XOR formula: p1 + p2 - 2*p1*p2
+                idx = pattern_to_idx[key]
+                p_existing = final_probabilities[idx]
+                final_probabilities[idx] = p_existing + prob - 2 * p_existing * prob
+            else:
+                # New pattern
+                pattern_to_idx[key] = len(final_probabilities)
+                final_det_id_lists.append(list(det_ids))
+                final_obs_id_lists.append(list(obs_ids))
+                final_probabilities.append(prob)
+        else:
+            final_det_id_lists.append(list(det_ids))
+            final_obs_id_lists.append(list(obs_ids))
+            final_probabilities.append(prob)
 
     for _, instruction in enumerate(dem):
         instruction: stim.DemInstruction
         if instruction.type == "error":
             error_prob = float(instruction.args_copy()[0])
 
-            current_segment_dets = []
-            current_segment_obs = []
+            current_segment_dets: list[int] = []
+            current_segment_obs: list[int] = []
 
             targets = instruction.targets_copy()
-            if (
-                not targets
-            ):  # Handle error instructions with no targets, if they are possible
-                # This case might mean an error with a probability but no effect on dets/obs.
-                # Depending on desired behavior, one might add an empty mechanism or skip.
-                # For now, let's assume error instructions always have targets if they are meaningful.
-                # If an error op has a probability but no targets, it won\'t form a column.
+            if not targets:
+                # Handle error instructions with no targets, if they are possible.
+                # This case might mean an error with a probability but no effect.
                 pass
 
-            for i, target in enumerate(targets):
+            for target in targets:
                 if target.is_relative_detector_id():
                     current_segment_dets.append(int(str(target)[1:]))
                 elif target.is_logical_observable_id():
                     current_segment_obs.append(int(str(target)[1:]))
                 elif target.is_separator():
-                    if (
-                        current_segment_dets or current_segment_obs
-                    ):  # Add segment if not empty
-                        final_det_id_lists.append(list(current_segment_dets))
-                        final_obs_id_lists.append(list(current_segment_obs))
-                        final_probabilities.append(error_prob)
-                    current_segment_dets.clear()  # Reset for next segment
-                    current_segment_obs.clear()
+                    add_error_mechanism(
+                        current_segment_dets, current_segment_obs, error_prob
+                    )
+                    current_segment_dets = []
+                    current_segment_obs = []
                 else:
                     raise ValueError(f"Unknown target type: {target}")
 
             # After loop, add the last segment
-            if current_segment_dets or current_segment_obs:
-                final_det_id_lists.append(list(current_segment_dets))
-                final_obs_id_lists.append(list(current_segment_obs))
-                final_probabilities.append(error_prob)
+            add_error_mechanism(current_segment_dets, current_segment_obs, error_prob)
 
     p = np.array(final_probabilities, dtype=float)
     num_decomposed_errors = len(final_probabilities)

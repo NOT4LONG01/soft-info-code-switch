@@ -143,6 +143,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         lsd_order: int = 0,
         ms_scaling_factor: float = 1.0,
         detector_time_coords: int | Sequence[int] = -1,
+        merge_duplicate_errors: bool = False,
         **kwargs,
     ):
         """
@@ -176,10 +177,19 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
             If a sequence of integers, it explicitly specifies the time coordinates of
             the detectors, so its length must be the same as the number of detectors.
             If `circuit` is not given, this must be a sequence of integers.
+        merge_duplicate_errors : bool, optional
+            If True and a circuit is provided, merge error mechanisms with identical
+            detector and observable patterns into a single column, combining their
+            probabilities using the XOR formula for independent events. Defaults to False.
         """
         # SoftOutputsBpLsdDecoder will always use decompose_errors=False if a circuit is given
         super().__init__(
-            H=H, p=p, obs_matrix=obs_matrix, circuit=circuit, decompose_errors=False
+            H=H,
+            p=p,
+            obs_matrix=obs_matrix,
+            circuit=circuit,
+            decompose_errors=False,
+            merge_duplicate_errors=merge_duplicate_errors,
         )
 
         bplsd_kwargs = {

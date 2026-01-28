@@ -18,6 +18,7 @@ class SoftOutputsDecoder:
     circuit: Optional[stim.Circuit]
     bit_llrs: np.ndarray
     decompose_errors: bool
+    merge_duplicate_errors: bool
 
     def __init__(
         self,
@@ -27,6 +28,7 @@ class SoftOutputsDecoder:
         obs_matrix: Optional[csc_matrix | np.ndarray | List[List[bool | int]]] = None,
         circuit: Optional[stim.Circuit] = None,
         decompose_errors: bool = False,
+        merge_duplicate_errors: bool = False,
     ):
         """
         Base class for decoders with additional soft outputs.
@@ -44,12 +46,19 @@ class SoftOutputsDecoder:
         decompose_errors : bool, optional
             If True and a circuit is provided, the detector error model will be generated
             with `decompose_errors=True`. Defaults to False.
+        merge_duplicate_errors : bool, optional
+            If True and a circuit is provided, merge error mechanisms with identical
+            detector and observable patterns into a single column, combining their
+            probabilities using the XOR formula for independent events. Defaults to False.
         """
         self.decompose_errors = decompose_errors
+        self.merge_duplicate_errors = merge_duplicate_errors
         if circuit is not None:
             assert H is None and p is None and obs_matrix is None
             dem = circuit.detector_error_model(decompose_errors=self.decompose_errors)
-            H, obs_matrix, p = dem_to_parity_check(dem)
+            H, obs_matrix, p = dem_to_parity_check(
+                dem, merge_duplicates=self.merge_duplicate_errors
+            )
         else:
             assert H is not None
 
