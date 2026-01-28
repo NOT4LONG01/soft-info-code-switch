@@ -7,7 +7,7 @@ from scipy.sparse import csc_matrix
 
 def dem_to_parity_check(
     dem: stim.DetectorErrorModel,
-    merge_duplicates: bool = False,
+    merge_duplicates: bool = True,
 ) -> Tuple[csc_matrix, csc_matrix, np.ndarray]:
     """
     Convert a detector error model (DEM) into a parity check matrix, observable matrix,

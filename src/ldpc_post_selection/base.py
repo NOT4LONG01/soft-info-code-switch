@@ -28,7 +28,7 @@ class SoftOutputsDecoder:
         obs_matrix: Optional[csc_matrix | np.ndarray | List[List[bool | int]]] = None,
         circuit: Optional[stim.Circuit] = None,
         decompose_errors: bool = False,
-        merge_duplicate_errors: bool = False,
+        merge_duplicate_errors: bool = True,
     ):
         """
         Base class for decoders with additional soft outputs.

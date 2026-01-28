@@ -143,7 +143,7 @@ class SoftOutputsBpLsdDecoder(SoftOutputsDecoder):
         lsd_order: int = 0,
         ms_scaling_factor: float = 1.0,
         detector_time_coords: int | Sequence[int] = -1,
-        merge_duplicate_errors: bool = False,
+        merge_duplicate_errors: bool = True,
         **kwargs,
     ):
         """

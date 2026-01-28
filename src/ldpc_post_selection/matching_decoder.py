@@ -23,7 +23,7 @@ class SoftOutputsMatchingDecoder(SoftOutputsDecoder):
         p: Optional[np.ndarray | List[float]] = None,
         obs_matrix: Optional[csc_matrix | np.ndarray | List[List[bool | int]]] = None,
         circuit: Optional[stim.Circuit] = None,
-        merge_duplicate_errors: bool = False,
+        merge_duplicate_errors: bool = True,
     ):
         """
         PyMatching decoder with additional soft outputs
