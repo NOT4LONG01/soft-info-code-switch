@@ -35,7 +35,7 @@ See the [`basic_usage.ipynb` notebook](examples/basic_usage.ipynb).
 
 ## Notes
 
-- *(28 Jan 2026)* Updated the DEM-to-parity-check-matrix conversion to merge identical error mechanisms into a single column with aggregated error probability. This reduces the Tanner graph size for BP decoding and can improve decoding performance. For example, with six rounds of the $[[72, 12, 6]]$ BB code at $p=0.1\%$, the logical error rate (before post-selection) improves by $\sim 1.6\times$, from $\sim 3.9 \times 10^{-4}$ to $\sim 2.5 \times 10^{-4}$. This behavior is enabled by default; to disable it, set `merge_duplicate_errors=False` when defining a decoder instance (e.g., `SoftOutputsBpLsdDecoder`). We thank the authors of [arXiv:2601.17757](https://www.arxiv.org/abs/2601.17757) (Xie, Yoshioka, Tsubouchi, and Li) for bringing this to our attention.
+- *(28 Jan 2026)* Updated the DEM-to-parity-check-matrix conversion to merge identical error mechanisms into a single column with aggregated error probability. This reduces the Tanner graph size for BP decoding and can improve decoding performance. For example, with six rounds of the $[[72, 12, 6]]$ BB code at $p=0.1\%$, the logical error rate (before post-selection) improves by $\sim 1.6\times$, from $\sim 3.9 \times 10^{-4}$ to $\sim 2.5 \times 10^{-4}$. This modification has not been reflected in our [paper](https://arxiv.org/abs/2510.05795), so the reported logical error rates can be higher than the values that can be obtained from the latest version of this package. We thank the authors of [arXiv:2601.17757](https://www.arxiv.org/abs/2601.17757) (Xie, Yoshioka, Tsubouchi, and Li) for bringing this to our attention.
 
 ## Citation
 
