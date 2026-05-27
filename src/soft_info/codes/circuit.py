@@ -1,6 +1,6 @@
 """
-circuit.py
-----------
+soft_info.codes.circuit
+-----------------------
 Stim circuit builders for CSS quantum memory experiments.
 
 Circuit topologies
@@ -47,9 +47,9 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import stim
 
-from helpers import find_logical_operator
-from noise_models import (standard_depolarizing_noise_model, si1000_noise_model,
-                          phenomenological_css_circuit, circuit_level_css_circuit)
+from ..helpers import find_logical_operator
+from .noise import (standard_depolarizing_noise_model, si1000_noise_model,
+                    phenomenological_css_circuit, circuit_level_css_circuit)
 
 
 def load_schedule(filepath: str) -> Dict[Tuple[int, int], int]:

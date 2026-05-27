@@ -1,0 +1,20 @@
+Schedule Optimization Memo
+==========================
+Date       : 2026-03-31 06:34:31
+Code       : [[15, 1, 3]]  (tetrahedral)
+Method     : alpha
+Decoder    : bp_osd
+Error model: idle=5.00e-03, cnot=5.00e-03
+Shots      : 10000
+
+Results
+-------
+Circuit depth (ticks) : 21
+X logical error rate  : 0.0000e+00
+Z logical error rate  : 3.2400e-02
+Overall error rate    : 3.2400e-02
+
+Files
+-----
+Schedule (asyndrome) : /home/chae-yeun/work/DecodingCodesWithTransversalT/data/schedule/tetrahedral/tetrahedral_n3_alpha-bp_osd.json
+Schedule (circuit)   : /home/chae-yeun/work/DecodingCodesWithTransversalT/data/schedule/tetrahedral/sched_tetrahedral_val3_bp_osd.json

@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ldpc-post-selection"
+name = "soft-info"
 version = "0.1.1"
-description = "LDPC Post Selection Decoding"
+description = "Soft-info decoding and post-selection for quantum LDPC and color codes"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -22,13 +22,16 @@ dependencies = [
     "pymatching",
     "ldpc>=2.4.0",
     "joblib",
+    "galois",
+    "sinter",
 ]
 
 [tool.setuptools]
-packages = ["ldpc_post_selection"]
+packages = ["soft_info"]
 
 [tool.setuptools.package-dir]
-"ldpc_post_selection" = "src/ldpc_post_selection"
+"soft_info" = "src/soft_info"
 
 [tool.setuptools.package-data]
-"*" = ["*.txt", "*.md", "*.yml", "*.yaml", "*.json"] 
+"*" = ["*.txt", "*.md", "*.yml", "*.yaml", "*.json"]
+

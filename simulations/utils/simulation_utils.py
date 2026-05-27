@@ -10,11 +10,11 @@ import stim
 from joblib import Parallel, delayed
 from scipy import sparse
 
-from ldpc_post_selection.decoder import (
+from soft_info.decoders.legacy import (
     SoftOutputsBpLsdDecoder,
     SoftOutputsMatchingDecoder,
 )
-from ldpc_post_selection.logical_error_distribution import (
+from soft_info.analysis.distribution import (
     collect_logical_error_distribution_fast,
 )
 

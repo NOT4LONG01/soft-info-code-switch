@@ -6,7 +6,7 @@ import numpy as np
 import igraph as ig
 import scipy.sparse as sp
 
-from ldpc_post_selection.cluster_tools import (
+from .clusters import (
     compute_lp_norm,
     label_clusters_igraph,
 )

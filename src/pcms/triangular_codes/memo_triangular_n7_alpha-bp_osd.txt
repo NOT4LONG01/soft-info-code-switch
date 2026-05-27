@@ -1,0 +1,20 @@
+Schedule Optimization Memo
+==========================
+Date       : 2026-04-08 18:57:06
+Code       : [[37, 1, 7]]  (triangular)
+Method     : alpha
+Decoder    : bp_osd
+Error model: idle=5.00e-03, cnot=5.00e-03
+Shots      : 10000
+
+Results
+-------
+Circuit depth (ticks) : 19
+X logical error rate  : 2.0000e-04
+Z logical error rate  : 0.0000e+00
+Overall error rate    : 2.0000e-04
+
+Files
+-----
+Schedule (asyndrome) : /home/chae-yeun/work/DecodingCodesWithTransversalT/data/schedule/triangular/triangular_n7_alpha-bp_osd.json
+Schedule (circuit)   : /home/chae-yeun/work/DecodingCodesWithTransversalT/data/schedule/triangular/sched_triangular_val7_bp_osd.json

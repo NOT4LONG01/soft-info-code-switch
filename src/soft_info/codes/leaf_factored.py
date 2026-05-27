@@ -1,8 +1,8 @@
 """
-leaf_factored.py
-----------------
+soft_info.codes.leaf_factored
+-----------------------------
 Observable-gauge rewrite that minimizes leaf-qubit support in logical
-operators. Used by `overlapping.ler_windowed(leaf_reduce=True, ...)`.
+operators. Used by ``soft_info.pipeline.overlapping.ler_windowed(leaf_reduce=True, ...)``.
 
 Why it helps
 ------------

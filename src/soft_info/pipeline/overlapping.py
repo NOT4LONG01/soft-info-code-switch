@@ -1,6 +1,6 @@
 """
-overlapping.py
---------------
+soft_info.pipeline.overlapping
+------------------------------
 Sliding-window decoding primitives for CSS memory experiments.
 
 Builds per-window DEM slices via coordinate-based spacetime slicing, threads
@@ -35,11 +35,11 @@ import numpy as np
 import stim
 from scipy.sparse import csc_matrix
 
-from helpers import find_logical_operator, PROJECT_ROOT
-from circuit import generate_experiment_with_noise, load_schedule
-from noise_models import phenomenological_css_circuit
-from leaf_factored import reduce_Lz_leaf_support, leaf_mask
-from decoders import build_decoder
+from ..helpers import find_logical_operator, PROJECT_ROOT
+from ..codes.circuit import generate_experiment_with_noise, load_schedule
+from ..codes.noise import phenomenological_css_circuit
+from ..codes.leaf_factored import reduce_Lz_leaf_support, leaf_mask
+from ..decoders.sinter import build_decoder
 from quits.simulation import get_stim_mem_result
 from quits.decoder.base import detector_error_model_to_matrix
 

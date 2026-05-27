@@ -8,7 +8,7 @@ from .SlidingWindowDecoder.src.build_circuit import (
 from .SlidingWindowDecoder.src.codes_q import (
     create_bivariate_bicycle_codes,
 )
-from ldpc_post_selection.stim_tools import remove_detectors_from_circuit
+from soft_info.codes.stim_tools import remove_detectors_from_circuit
 
 
 def build_surface_code_circuit(

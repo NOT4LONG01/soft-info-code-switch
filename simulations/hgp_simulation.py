@@ -7,7 +7,7 @@ import numpy as np
 import stim
 from scipy import sparse
 
-from ldpc_post_selection.decoder import SoftOutputsBpLsdDecoder
+from soft_info.decoders.legacy import SoftOutputsBpLsdDecoder
 from simulations.utils.simulation_utils import (
     _convert_df_dtypes_for_feather,
     get_existing_shots,

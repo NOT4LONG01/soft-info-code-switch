@@ -1,6 +1,6 @@
 """
-optimize_schedule.py
---------------------
+soft_info.pipeline.optimize_schedule
+------------------------------------
 Optimizes syndrome measurement circuit schedules for QEC codes using the
 AlphaSyndrome framework (arXiv:2601.12509).
 
@@ -18,7 +18,7 @@ baseline
 
 Output files
 ------------
-For each optimised code two files are written to data/schedule/<code_type>/:
+For each optimised code two files are written to pcms/<code_type>_codes/:
 
   <code_type>_n{n}[_variant]_alpha-<decoder>.json
       Full AlphaSyndrome schedule in asyndrome's native JSON format.
@@ -56,17 +56,14 @@ from functools import partial
 from typing import Optional, Tuple
 import numpy as np
 
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-if CURRENT_DIR not in sys.path:
-    sys.path.insert(0, CURRENT_DIR)
-
-# Ensure stimdec.py subprocess (spawned by DecoderAgent) can import local modules
+# Ensure DecoderAgent's spawned subprocesses can `import soft_info...`
+_PKG_PARENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _existing_pp = os.environ.get("PYTHONPATH", "")
-if CURRENT_DIR not in _existing_pp.split(os.pathsep):
-    os.environ["PYTHONPATH"] = CURRENT_DIR + (os.pathsep + _existing_pp if _existing_pp else "")
+if _PKG_PARENT_DIR not in _existing_pp.split(os.pathsep):
+    os.environ["PYTHONPATH"] = _PKG_PARENT_DIR + (os.pathsep + _existing_pp if _existing_pp else "")
 
-from helpers import find_logical_operator, PROJECT_ROOT
-from codes import CodeRegistry, _compute_k
+from ..helpers import find_logical_operator, PROJECT_ROOT
+from ..codes.registry import CodeRegistry, _compute_k, schedule_dir
 from asyndrome import (
     CSSCode,
     AlphaScheduler,
@@ -75,7 +72,7 @@ from asyndrome import (
     Schedule,
 )
 from asyndrome.stimcirc import DecoderAgent, _sinter_predict_observable
-from decoders import build_decoder, RELAY_PARAMS
+from ..decoders.sinter import build_decoder, RELAY_PARAMS
 import relay_bp.stim as _relay_bp_stim
 
 
@@ -175,7 +172,7 @@ def build_css_code(
 
 
 def _default_output_dir(code_type: str) -> str:
-    return os.path.join(PROJECT_ROOT, "data", "schedule", code_type)
+    return schedule_dir(code_type)
 
 
 def _circuit_schedule_path(output_dir: str, code_type: str, n: int, variant: str = None, decoder: str = None) -> str:

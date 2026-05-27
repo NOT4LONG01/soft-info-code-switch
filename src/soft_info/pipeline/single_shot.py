@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
 """
-single_shot.py
---------------
-Sweep runner for the single-shot decoding property.  Two modes:
+soft_info.pipeline.single_shot
+------------------------------
+Sweep runner for the single-shot decoding property. Two modes:
 
   --mode w  (default)  Fix T, sweep W → LER vs W.
                         Flat tail after some w* ⇒ single-shot at w*.
@@ -23,11 +22,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from codes import CodeRegistry
-from helpers import PROJECT_ROOT
-from overlapping import ler_windowed
+from ..codes import CodeRegistry
+from ..helpers import PROJECT_ROOT
+from .overlapping import ler_windowed
 
 
 def _worker(task):
@@ -35,10 +32,8 @@ def _worker(task):
     (code_type, n, variant, decoder_name, W, T, p, n_shots,
      noise_model, basis, stride, seed, max_errors) = task
 
-    import sys, os
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from codes import CodeRegistry
-    from overlapping import ler_windowed
+    from ..codes import CodeRegistry
+    from .overlapping import ler_windowed
 
     code = CodeRegistry.load(code_type, n, variant)
     ler, errs, shots, setup_s, decode_per_shot = ler_windowed(

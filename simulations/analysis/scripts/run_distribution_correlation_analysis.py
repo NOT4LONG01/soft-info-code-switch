@@ -45,9 +45,9 @@ project_root = script_dir.parent.parent.parent
 sys.path.insert(0, str(project_root / "src"))
 sys.path.insert(0, str(project_root / "simulations"))
 
-from ldpc_post_selection.bplsd_decoder import SoftOutputsBpLsdDecoder
-from ldpc_post_selection.cluster_tools import compute_cluster_norm_fraction
-from ldpc_post_selection.logical_error_distribution import (
+from soft_info.decoders.bplsd import SoftOutputsBpLsdDecoder
+from soft_info.analysis.clusters import compute_cluster_norm_fraction
+from soft_info.analysis.distribution import (
     index_to_logical_class,
     logical_class_to_index,
     collect_logical_error_distribution_fast,

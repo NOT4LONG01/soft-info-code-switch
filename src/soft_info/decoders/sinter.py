@@ -1,6 +1,6 @@
 """
-decoders.py
------------
+soft_info.decoders.sinter
+-------------------------
 Sinter-compatible decoder wrappers for all supported QEC decoders.
 
 Supported decoders
@@ -29,7 +29,7 @@ RELAY_PARAMS
 
 Usage
 -----
-    from decoders import build_decoder, ALL_DECODERS
+    from soft_info.decoders.sinter import build_decoder, ALL_DECODERS
 
     decoder = build_decoder("mwpf", trace_filename="/tmp/trace.bin")
     decoder = build_decoder("tesseract")

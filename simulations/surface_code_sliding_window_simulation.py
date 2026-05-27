@@ -7,7 +7,7 @@ from typing import Any, Dict
 import numpy as np
 from scipy import sparse
 
-from ldpc_post_selection.decoder import SoftOutputsBpLsdDecoder
+from soft_info.decoders.legacy import SoftOutputsBpLsdDecoder
 from simulations.utils.simulation_utils import (
     get_existing_shots,
     bplsd_sliding_window_simulation_task_parallel,

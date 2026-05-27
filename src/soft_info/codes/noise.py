@@ -1,6 +1,6 @@
 """
-noise_models.py
----------------
+soft_info.codes.noise
+---------------------
 Noise-channel injection for Stim circuits.
 
 Models

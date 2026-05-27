@@ -180,7 +180,7 @@ def collect_logical_error_distribution(
     >>> print(f"Logical error rate: {metadata['logical_error_rate']:.4f}")
     """
     # Import here to avoid circular import
-    from ldpc_post_selection.bplsd_decoder import SoftOutputsBpLsdDecoder
+    from ..decoders.bplsd import SoftOutputsBpLsdDecoder
 
     if decoder is None:
         if decoder_params is None:
@@ -293,7 +293,7 @@ def collect_logical_error_distribution_fast(
         Dictionary containing simulation metadata.
     """
     # Import here to avoid circular import
-    from ldpc_post_selection.bplsd_decoder import SoftOutputsBpLsdDecoder
+    from ..decoders.bplsd import SoftOutputsBpLsdDecoder
 
     if decoder is None:
         if decoder_params is None:

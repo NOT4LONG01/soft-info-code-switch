@@ -1,7 +1,7 @@
 """
-main.py
--------
-CLI entry point for the QEC decoding pipeline.
+soft_info.pipeline.main
+-----------------------
+CLI entry point for the QEC decoding pipeline (``python -m soft_info.pipeline.main``).
 
 Loads codes via CodeRegistry, builds noisy Stim circuits, runs sinter
 sampling, and writes per-rank CSV results.
@@ -42,14 +42,10 @@ import numpy as np
 import pandas as pd
 import sinter
 
-_DECODER_DIR = os.path.dirname(os.path.abspath(__file__))
-if _DECODER_DIR not in sys.path:
-    sys.path.insert(0, _DECODER_DIR)
-
-from helpers import parse_and_average_stats, PROJECT_ROOT
-from codes import CodeRegistry
-from circuit import generate_experiment_with_noise, load_schedule
-from decoders import build_decoder, ALL_DECODERS, EXTRA_DECODERS
+from ..helpers import parse_and_average_stats, PROJECT_ROOT
+from ..codes import CodeRegistry, schedule_dir
+from ..codes.circuit import generate_experiment_with_noise, load_schedule
+from ..decoders.sinter import build_decoder, ALL_DECODERS, EXTRA_DECODERS
 
 
 def _write_manifest(path: str, data: dict) -> None:
@@ -127,7 +123,7 @@ def main():
     model_name   = "depolarizing"
 
     data_dir  = os.path.join(PROJECT_ROOT, "data")
-    sched_dir = os.path.join(data_dir, "schedule", args.code_type)
+    sched_dir = schedule_dir(args.code_type)
 
     if proc_rank == 0:
         os.makedirs(sched_dir, exist_ok=True)

@@ -4,7 +4,7 @@ import numpy as np
 import stim
 from scipy.sparse import csc_matrix
 
-from .stim_tools import dem_to_parity_check
+from ..codes.stim_tools import dem_to_parity_check
 
 
 class SoftOutputsDecoder:

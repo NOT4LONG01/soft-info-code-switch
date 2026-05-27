@@ -11,7 +11,7 @@ from ldpc.bplsd_decoder import BpLsdDecoder
 from scipy.sparse import csc_matrix, vstack
 
 from .base import SoftOutputsDecoder
-from .cluster_tools import compute_cluster_stats
+from ..analysis.clusters import compute_cluster_stats
 
 
 def _decode_single_logical_class(

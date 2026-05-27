@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import stim
 
-from ldpc_post_selection.logical_error_distribution import (
+from soft_info.analysis.distribution import (
     collect_logical_error_distribution,
     collect_logical_error_distribution_fast,
     index_to_logical_class,

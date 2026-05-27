@@ -39,7 +39,7 @@ project_root = script_dir.parent.parent.parent
 sys.path.insert(0, str(project_root / "src"))
 sys.path.insert(0, str(project_root / "simulations"))
 
-from ldpc_post_selection.bplsd_decoder import SoftOutputsBpLsdDecoder
+from soft_info.decoders.bplsd import SoftOutputsBpLsdDecoder
 from simulations.utils.build_circuit import build_BB_circuit
 
 

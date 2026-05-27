@@ -1,7 +1,9 @@
 """
-codes.py
---------
-OOP registry for all QEC code families used in this project.
+soft_info.codes.registry
+------------------------
+OOP registry for the QEC code families exposed by this project (currently
+``triangular`` and ``tetrahedral``; other families remain defined but are not
+registered until their alist data lands in ``src/pcms/``).
 
 Dataclasses
 -----------
@@ -57,7 +59,10 @@ from dataclasses import dataclass
 from typing import ClassVar, List, Tuple
 
 _THIS_DIR      = os.path.dirname(os.path.abspath(__file__))
-_CODES_LIB_DIR = os.path.join(os.path.dirname(_THIS_DIR), 'codes_lib')
+_PKG_DIR       = os.path.dirname(_THIS_DIR)
+_SRC_DIR       = os.path.dirname(_PKG_DIR)
+_PCMS_DIR      = os.path.join(_SRC_DIR, 'pcms')
+_CODES_LIB_DIR = os.path.join(os.path.dirname(_SRC_DIR), 'codes_lib')
 
 _OBSOLETTE_DIR    = os.path.join(_CODES_LIB_DIR, "obsolette")
 GO03_DIR          = os.path.join(_OBSOLETTE_DIR,  "GO03_self_dual")
@@ -65,9 +70,14 @@ EQR_ISO_DIR       = os.path.join(_OBSOLETTE_DIR,  "eQR_iso_dual_CSS")
 EQR_SD_CSS_DIR    = os.path.join(_OBSOLETTE_DIR,  "eQR_self_dual_CSS")
 JA25_DIR          = os.path.join(_CODES_LIB_DIR,  "JA25_transversal_T")
 CAPPED_COLOR_DIR  = os.path.join(_CODES_LIB_DIR,  "capped_color_codes")
-TETRAHEDRAL_DIR   = os.path.join(_CODES_LIB_DIR,  "tetrahedral_codes")
-TRIANGULAR_DIR    = os.path.join(_CODES_LIB_DIR,  "triangular_codes")
+TETRAHEDRAL_DIR   = os.path.join(_PCMS_DIR,       "tetrahedral_codes")
+TRIANGULAR_DIR    = os.path.join(_PCMS_DIR,       "triangular_codes")
 QSD_DIR           = os.path.join(_CODES_LIB_DIR,  "quantum_self_dual_CSS")
+
+
+def schedule_dir(code_type: str) -> str:
+    """Directory holding measurement schedules for `code_type`, colocated with the alist matrices in pcms/."""
+    return os.path.join(_PCMS_DIR, f"{code_type}_codes")
 
 GO03_DICT         = {4:2, 6:2, 8:2, 10:2, 12:4, 14:4, 16:4, 18:4, 20:4, 22:6, 24:6, 26:6, 28:6, 30:6, 32:8, 34:6, 36:8, 38:8, 40:8, 42:8, 44:8, 46:8, 48:8, 50:8, 52:10, 54:8, 56:10, 58:10, 60:12, 62:10, 64:10}
 JA25_DICT         = {15:3, 49:5, 95:7, 185:9, 189:9, 279:11, 283:11, 441:13, 599:15}
@@ -449,6 +459,5 @@ class CodeRegistry:
         return cls._families[code_type].n_values()
 
 
-for _cls in [GO03Code, CappedColorCode, EQRIsoDualCode, EQRSelfDualCSSCode,
-             JA25Code, TetrahedralCode, TriangularCode, QuantumSelfDualCSSCode]:
+for _cls in [TetrahedralCode, TriangularCode]:
     CodeRegistry.register(_cls)

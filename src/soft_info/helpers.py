@@ -1,6 +1,6 @@
 """
-helpers.py
-----------
+soft_info.helpers
+-----------------
 Project-wide utility functions.
 
 Exports
@@ -53,7 +53,7 @@ def find_logical_operator(Hx, Hz, basis="Z"):
 
 
 def parse_and_average_stats(stats: List[sinter.TaskStats], model_name: str) -> pd.DataFrame:
-    from decoders import read_trace
+    from .decoders.sinter import read_trace
     results = []
     for s in stats:
         m = s.json_metadata or {}
